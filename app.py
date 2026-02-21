@@ -8,8 +8,8 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 pd.set_option('future.no_silent_downcasting', True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.markdown("### Consolidated CEE Performance Dashboard")
-st.info("Frozen Logic: Total Roll-up on Deselect | Sidebar Filtering | bbdaily-b2c Rule")
+st.markdown("### Multi-View Performance Dashboard")
+st.info("Frozen Logic: Dual View (CEE/Customer) | Dynamic Roll-up | bbdaily-b2c Rule")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload CSV files", type="csv", accept_multiple_files=True)
@@ -18,12 +18,14 @@ if uploaded_files:
     all_data = []
     for file in uploaded_files:
         try:
+            # Handle encoding issues
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
+            # Column Mapping
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob'],
                 'Date_Raw': ['Date', 'Complaint Created Date & Time', 'date'],
@@ -31,6 +33,7 @@ if uploaded_files:
                 'L5': ['Level 5', 'Agent Disposition Levels 5'],
                 'CEE_Name_1': ['Cee Name', 'Cee name', 'CEE NAME'],
                 'CEE_ID_1': ['CEE Number', 'cee_number', 'CEE ID', 'cee_id'],
+                'Member_Id': ['Member Id', 'member_id', 'Member ID'],
                 'Hub': ['Hub', 'HUB', 'hub'],
                 'City': ['City', 'CITY', 'city']
             }
@@ -48,12 +51,14 @@ if uploaded_files:
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
+                    # Clean Values
                     def clean_val(val):
                         v = str(val).strip()
                         return v if v not in ['', 'nan', '-', 'None', '0', '0.0'] else "Unknown"
 
                     temp_df['CEE_Name'] = temp_df['CEE_Name_1'].apply(clean_val)
                     temp_df['CEE_ID'] = temp_df['CEE_ID_1'].apply(clean_val)
+                    temp_df['Member_Id'] = temp_df['Member_Id'].apply(clean_val)
                     temp_df['L4'] = temp_df['L4'].astype(str).str.strip()
                     temp_df['L5'] = temp_df['L5'].astype(str).str.strip()
                     all_data.append(temp_df)
@@ -66,7 +71,6 @@ if uploaded_files:
         # --- 3. SIDEBAR FILTERS ---
         st.sidebar.header("Global Filters")
         
-        # City & Date
         all_cities = sorted(df['City'].dropna().unique())
         selected_cities = st.sidebar.multiselect("Select City", all_cities, default=all_cities)
         
@@ -80,34 +84,21 @@ if uploaded_files:
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(selected_cities))
         filtered_df = df[mask]
 
-        # --- DYNAMIC GROUPING LOGIC ---
-        # 1. Get unique values for filters
+        # Category Filters
         l4_options = sorted(filtered_df['L4'].unique())
-        selected_l4 = st.sidebar.multiselect("Level 4 Filter", l4_options) # Default Empty
+        selected_l4 = st.sidebar.multiselect("Level 4 Filter (Leave empty for total sum)", l4_options)
         
         l5_options = sorted(filtered_df[filtered_df['L4'].isin(selected_l4)]['L5'].unique()) if selected_l4 else sorted(filtered_df['L5'].unique())
-        selected_l5 = st.sidebar.multiselect("Level 5 Filter", l5_options) # Default Empty
+        selected_l5 = st.sidebar.multiselect("Level 5 Filter", l5_options)
 
-        # 2. Determine Grouping Columns
-        # If user selected items, group by them. If empty, roll up to CEE level.
-        group_cols = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
-        
+        # Filtering logic for the display data
         final_display_df = filtered_df.copy()
-        
-        if selected_l4:
-            group_cols.append('L4')
-            final_display_df = final_display_df[final_display_df['L4'].isin(selected_l4)]
-        
-        if selected_l5:
-            group_cols.append('L5')
-            final_display_df = final_display_df[final_display_df['L5'].isin(selected_l5)]
+        if selected_l4: final_display_df = final_display_df[final_display_df['L4'].isin(selected_l4)]
+        if selected_l5: final_display_df = final_display_df[final_display_df['L5'].isin(selected_l5)]
 
-        # --- 4. DATA AGGREGATION ---
+        # Aggregation Logic
         def generate_report(data, groups, s_date, e_date):
-            # Total Column
             report = data.groupby(groups).size().reset_index(name='Range_Total')
-            
-            # Aging Buckets
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, start_off, end_off in buckets:
                 b_end = e_date - timedelta(days=start_off)
@@ -116,31 +107,45 @@ if uploaded_files:
                 b_counts = data[mask_b].groupby(groups).size().reset_index(name=label)
                 report = report.merge(b_counts, on=groups, how='left').fillna(0)
             
-            # Daily Columns
             curr = s_date
             while curr <= e_date:
-                d_str = curr.strftime('%d-%m-%Y')
+                d_str = curr.strftime('%d-%b') # Shorter date format for columns
                 day_data = data[data['Date'] == curr].groupby(groups).size().reset_index(name=d_str)
                 report = report.merge(day_data, on=groups, how='left').fillna(0)
                 curr += timedelta(days=1)
 
-            # Format as integers
             numeric_cols = report.columns.difference(groups)
             report[numeric_cols] = report[numeric_cols].astype(int)
             return report
 
-        # --- 5. DISPLAY ---
-        st.subheader("CEE Complaint Summary")
-        if not final_display_df.empty:
-            result_table = generate_report(final_display_df, group_cols, start_date, end_date)
-            st.dataframe(result_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
+        # --- 4. TABS INTERFACE ---
+        tab1, tab2 = st.tabs(["👤 CEE Summary", "🛒 Customer Summary"])
+
+        with tab1:
+            group_cee = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
+            if selected_l4: group_cee.append('L4')
+            if selected_l5: group_cee.append('L5')
             
-            csv = result_table.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Report", csv, "cee_report.csv", "text/csv")
-        else:
-            st.warning("No data found for the current selection.")
+            st.subheader("CEE Complaint Performance")
+            if not final_display_df.empty:
+                cee_table = generate_report(final_display_df, group_cee, start_date, end_date)
+                st.dataframe(cee_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
+            else:
+                st.warning("No data for CEE view.")
+
+        with tab2:
+            group_cust = ['Member_Id', 'City']
+            if selected_l4: group_cust.append('L4')
+            if selected_l5: group_cust.append('L5')
+            
+            st.subheader("High Complaint Customers")
+            if not final_display_df.empty:
+                cust_table = generate_report(final_display_df, group_cust, start_date, end_date)
+                st.dataframe(cust_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
+            else:
+                st.warning("No data for Customer view.")
 
     else:
         st.error("No valid 'bbdaily-b2c' data found.")
 else:
-    st.info("Please upload files to begin.")
+    st.info("Please upload your CMS Ticket reports.")
