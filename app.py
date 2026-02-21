@@ -8,8 +8,8 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 pd.set_option('future.no_silent_downcasting', True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.markdown("### Executive Summary & Performance Overview")
-st.info("Frozen Logic: Aging Buckets Only | Dynamic Filters (VIP/Store) | bbdaily-b2c Rule")
+st.markdown("### 5-Tab Multi-Dimensional Analysis")
+st.info("Tabs: Performance Overview | CEE Summary (Aging) | CEE Overview (Raw) | Customer Summary (Aging) | Customer Overview (Raw)")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload CSV files", type="csv", accept_multiple_files=True)
@@ -24,7 +24,6 @@ if uploaded_files:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
-            # Expanded Column Mapping
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob'],
                 'Date_Raw': ['Date', 'Complaint Created Date & Time', 'date', 'Created Date'],
@@ -35,7 +34,8 @@ if uploaded_files:
                 'Member_Id': ['Member Id', 'member_id', 'Member ID'],
                 'Hub': ['Hub', 'HUB', 'hub', 'FC NAME'],
                 'City': ['City', 'CITY', 'city'],
-                'VIP': ['Is VIP Customer', 'vip', 'VIP Tag']
+                'VIP': ['Is VIP Customer', 'vip', 'VIP Tag'],
+                'Status': ['STATUS', 'status', 'Ticket Status']
             }
             
             for standard, options in col_map.items():
@@ -110,78 +110,73 @@ if uploaded_files:
         if selected_l4: filtered_df = filtered_df[filtered_df['L4'].isin(selected_l4)]
         if selected_l5: filtered_df = filtered_df[filtered_df['L5'].isin(selected_l5)]
 
-        # --- 4. AGGREGATION LOGIC (NO DAILY SUMMARY) ---
+        # --- 4. AGING LOGIC FUNCTION ---
         def generate_aging_report(data, groups, e_date):
-            # Total Column
             report = data.groupby(groups).size().reset_index(name='Range_Total')
-            
-            # Specific Aging Buckets based on selected End Date
-            buckets = [
-                ("0-5 Days", 0, 5), 
-                ("5-10 Days", 6, 10), 
-                ("10-15 Days", 11, 15), 
-                ("15-30 Days", 16, 30)
-            ]
-            
+            buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, start_off, end_off in buckets:
                 b_end = e_date - timedelta(days=start_off)
                 b_start = e_date - timedelta(days=end_off)
                 mask_b = (data['Date'] >= b_start) & (data['Date'] <= b_end)
                 b_counts = data[mask_b].groupby(groups).size().reset_index(name=label)
                 report = report.merge(b_counts, on=groups, how='left').fillna(0)
-            
-            # Format counts as int
             numeric_cols = ["0-5 Days", "5-10 Days", "10-15 Days", "15-30 Days", "Range_Total"]
             report[numeric_cols] = report[numeric_cols].astype(int)
             return report
 
-        # --- 5. TABS INTERFACE ---
-        t_overview, t_cee, t_cust = st.tabs(["📊 Performance Overview", "👤 CEE Summary", "🛒 Customer Summary"])
+        # --- 5. TABS INTERFACE (5 TABS) ---
+        t_perf, t_cee_sum, t_cee_over, t_cust_sum, t_cust_over = st.tabs([
+            "📊 Performance Overview", 
+            "👤 CEE Summary", 
+            "🔍 CEE Overview", 
+            "🛒 Customer Summary", 
+            "🔎 Customer Overview"
+        ])
 
-        with t_overview:
-            st.subheader(f"System Overview: {start_date} to {end_date}")
+        with t_perf:
+            st.subheader(f"System Pulse: {start_date} to {end_date}")
             if not filtered_df.empty:
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Total Tickets", len(filtered_df))
                 m2.metric("Unique CEEs", filtered_df['CEE_ID'].nunique())
                 m3.metric("Unique Customers", filtered_df['Member_Id'].nunique())
-                m4.metric("Avg Tickets/Day", round(len(filtered_df) / max((end_date - start_date).days, 1), 1))
-
+                m4.metric("Active Hubs", filtered_df['Hub'].nunique())
+                
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.write("**Top 10 Stores by Complaints**")
-                    st.dataframe(filtered_df['Hub'].value_counts().head(10), use_container_width=True)
+                    st.write("**Ticket Distribution by L4**")
+                    st.bar_chart(filtered_df['L4'].value_counts().head(10))
                 with c2:
-                    st.write("**Top 10 L4 Categories**")
-                    st.dataframe(filtered_df['L4'].value_counts().head(10), use_container_width=True)
-            else:
-                st.warning("No data for overview in this date range.")
+                    st.write("**Top 10 Cities**")
+                    st.dataframe(filtered_df['City'].value_counts().head(10), use_container_width=True)
 
-        with t_cee:
-            st.subheader("CEE Aging Summary")
+        with t_cee_sum:
+            st.subheader("CEE Aging Summary (Aggregated)")
             group_cee = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
             if selected_l4: group_cee.append('L4')
-            if selected_l5: group_cee.append('L5')
-            
             if not filtered_df.empty:
                 cee_table = generate_aging_report(filtered_df, group_cee, end_date)
                 st.dataframe(cee_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
-            else:
-                st.warning("Please adjust filters or upload data.")
 
-        with t_cust:
-            st.subheader("Customer Aging Summary")
+        with t_cee_over:
+            st.subheader("CEE Detailed Raw Data")
+            view_cols = ['Date', 'CEE_ID', 'CEE_Name', 'Hub', 'Member_Id', 'L4', 'L5', 'Status']
+            st.dataframe(filtered_df[view_cols].sort_values(by='Date', ascending=False), use_container_width=True)
+
+        with t_cust_sum:
+            st.subheader("Customer Aging Summary (Aggregated)")
             group_cust = ['Member_Id', 'City', 'VIP']
             if selected_l4: group_cust.append('L4')
-            if selected_l5: group_cust.append('L5')
-            
             if not filtered_df.empty:
                 cust_table = generate_aging_report(filtered_df, group_cust, end_date)
                 st.dataframe(cust_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
-            else:
-                st.warning("No customer data for current selection.")
+
+        with t_cust_over:
+            st.subheader("Customer Detailed Raw Data")
+            view_cols_cust = ['Date', 'Member_Id', 'City', 'VIP', 'Hub', 'L4', 'L5', 'Status']
+            st.dataframe(filtered_df[view_cols_cust].sort_values(by='Date', ascending=False), use_container_width=True)
 
     else:
-        st.error("No valid 'bbdaily-b2c' data found.")
+        st.error("No valid 'bbdaily-b2c' data found for the selected filters.")
 else:
-    st.info("Upload CSV files to begin. Ensure columns 'Lob' and 'Complaint Created Date' are present.")
+    st.info("Upload CSV files to begin. System will automatically filter for 'bbdaily-b2c' records.")
