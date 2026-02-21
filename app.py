@@ -8,7 +8,7 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
 st.markdown("### Combined: CEE Performance & Customer Refund Misuse")
-st.info("Frozen Logic: Full 30-Day Rolling Matrix | Sidebar L4/L5 Filters | Clean CEE Mapping")
+st.info("Frozen Logic: Dual Date Filters | Full 30-Day Matrix | Sidebar L4/L5 Filters")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload 'complaints.csv' or 'CmsTicketDetailReport.csv' files", type="csv", accept_multiple_files=True)
@@ -17,7 +17,7 @@ if uploaded_files:
     all_data = []
     for file in uploaded_files:
         try:
-            # low_memory=False solves the DtypeWarning for mixed columns
+            # low_memory=False prevents DtypeWarnings for large bbdaily files
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
@@ -48,11 +48,10 @@ if uploaded_files:
             
             # --- THUMB RULE: bbdaily-b2c ONLY ---
             if 'Lob' in temp_df.columns:
-                # Optimized filtering
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
-                    # Fix for Date Parsing Warning
+                    # Robust Date Parsing
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
                     # --- CLEANING CEE NAME & ID ---
@@ -77,13 +76,17 @@ if uploaded_files:
         refund_keywords = ['credited', 'refund', 'refunded', 'amount']
         df['Is_Refund'] = df['L4'].astype(str).str.lower().apply(lambda x: 1 if any(k in x for k in refund_keywords) else 0)
 
-        # --- 3. SIDEBAR FILTERS ---
+        # --- 3. SIDEBAR FILTERS (DUAL DATE FIELDS) ---
         st.sidebar.header("Global Filters")
-        available_dates = sorted(df['Date'].unique())
-        date_range = st.sidebar.date_input("Analysis Window", [min(available_dates), max(available_dates)])
-        start_date = date_range[0]
-        end_date = date_range[1] if len(date_range) > 1 else date_range[0]
         
+        available_dates = sorted(df['Date'].unique())
+        col_d1, col_d2 = st.sidebar.columns(2)
+        with col_d1:
+            start_date = st.date_input("From Date", min(available_dates))
+        with col_d2:
+            end_date = st.date_input("To Date", max(available_dates))
+        
+        # City & Category Filters
         all_cities = sorted(df['City'].dropna().unique())
         selected_cities = st.sidebar.multiselect("Select City", all_cities, default=all_cities)
         
@@ -120,7 +123,6 @@ if uploaded_files:
         with tab1:
             st.subheader("CEE Level 4: Rolling 30-Day Analysis")
             res_l4 = generate_full_30d_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'Hub', 'City'], end_date)
-            # Updated width parameter for Streamlit 1.42+
             st.dataframe(res_l4.sort_values(by='1D', ascending=False), width="stretch")
 
         with tab2:
@@ -140,6 +142,6 @@ if uploaded_files:
             st.dataframe(cust_matrix.sort_values(by='Refund_Incidents', ascending=False).head(50), width="stretch")
 
     else:
-        st.error("No 'bbdaily-b2c' data found. Check LOB in your files.")
+        st.error("No 'bbdaily-b2c' data found in these files.")
 else:
-    st.info("Awaiting file upload. Select multiple CSVs for full trend.")
+    st.info("Awaiting file upload. Select multiple CSVs to see the 30-day trend.")
