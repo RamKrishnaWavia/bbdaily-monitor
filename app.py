@@ -8,8 +8,8 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 pd.set_option('future.no_silent_downcasting', True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.markdown("### Full Suite: Executive Summaries, Rolling Matrix & Fraud Watchlist")
-st.info("Frozen Logic: Dual Date Selectors | VIP Filter | Dynamic Pivot | Aging Buckets")
+st.markdown("### Executive Performance & Refund Misuse Dashboard")
+st.info("Frozen Logic: CEE/Cust Summary with Aging | VIP Filter | dynamic Pivot | 30D Rolling Matrix")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload 'complaints.csv' or 'CmsTicketDetailReport.csv' files", type="csv", accept_multiple_files=True)
@@ -93,51 +93,63 @@ if uploaded_files:
         
         final_df = df[mask]
 
+        # Shared Logic for Aging Buckets
+        def generate_bucket_matrix(data, group_cols, e_date):
+            # Range Total (Count of complaints in selected range)
+            matrix = data.groupby(group_cols).size().reset_index(name='Range_Total')
+            
+            # Aging Buckets (Calculated from To Date)
+            buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
+            for label, start_off, end_off in buckets:
+                b_end = e_date - timedelta(days=start_off)
+                b_start = e_date - timedelta(days=end_off)
+                mask_b = (data['Date'] >= b_start) & (data['Date'] <= b_end)
+                b_counts = data[mask_b].groupby(group_cols).size().reset_index(name=label)
+                matrix = matrix.merge(b_counts, on=group_cols, how='left').fillna(0)
+            
+            # Formatting
+            for col in matrix.columns:
+                if col not in group_cols: matrix[col] = matrix[col].astype(int)
+            return matrix
+
         # --- 4. TABS ---
         t_summary, t_matrix, t_watchlist = st.tabs(["📌 Executive Summaries", "📊 30D CEE Matrix", "🕵️ Fraud Watchlist"])
 
         with t_summary:
-            st.subheader(f"Breakdown: {start_date} to {end_date}")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**🚛 CEE Occurrences by Category**")
-                cee_sum = final_df.groupby(['CEE_ID', 'CEE_Name', 'L4']).size().reset_index(name='Times_Seen')
-                st.dataframe(cee_sum.sort_values(by='Times_Seen', ascending=False), width="stretch")
-            with c2:
-                st.markdown("**👤 Customer Occurrences by Category**")
-                cust_sum = final_df.groupby(['Member', 'L4']).size().reset_index(name='Times_Seen')
-                st.dataframe(cust_sum.sort_values(by='Times_Seen', ascending=False), width="stretch")
+            st.subheader(f"Executive Breakdown: Category vs Aging Buckets ({start_date} to {end_date})")
+            
+            st.markdown("#### 🚛 CEE Summary: Category Occurrence per Aging Window")
+            cee_exec = generate_bucket_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4'], end_date)
+            st.dataframe(cee_exec.sort_values(by='Range_Total', ascending=False), width="stretch")
+            
+            st.divider()
+            
+            st.markdown("#### 👤 Customer Summary: Category Occurrence per Aging Window")
+            cust_exec = generate_bucket_matrix(final_df, ['Member', 'Is_VIP', 'L4'], end_date)
+            st.dataframe(cust_exec.sort_values(by='Range_Total', ascending=False), width="stretch")
 
         with t_matrix:
-            st.subheader("Rolling Performance Matrix")
-            # Matrix logic
-            def generate_dynamic_matrix(data, group_cols, s_date, e_date):
-                matrix = data.groupby(group_cols).size().reset_index(name='Range_Total')
+            st.subheader("Daily Rolling Performance Matrix (CEE)")
+            # Standard Daily Breakout Logic
+            def generate_full_matrix(data, group_cols, s_date, e_date):
+                matrix = generate_bucket_matrix(data, group_cols, e_date)
+                # Add Daily Columns
                 current = s_date
                 while current <= e_date:
                     day_counts = data[data['Date'] == current].groupby(group_cols).size().reset_index(name=str(current))
                     matrix = matrix.merge(day_counts, on=group_cols, how='left').fillna(0)
                     current += timedelta(days=1)
-                
-                buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
-                for label, start_off, end_off in buckets:
-                    b_end = e_date - timedelta(days=start_off)
-                    b_start = e_date - timedelta(days=end_off)
-                    mask_b = (data['Date'] >= b_start) & (data['Date'] <= b_end)
-                    b_counts = data[mask_b].groupby(group_cols).size().reset_index(name=label)
-                    matrix = matrix.merge(b_counts, on=group_cols, how='left').fillna(0)
-                
                 for col in matrix.columns:
                     if col not in group_cols: matrix[col] = matrix[col].astype(int)
                 return matrix
 
-            res = generate_dynamic_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'Hub'], start_date, end_date)
+            res = generate_full_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'Hub'], start_date, end_date)
             bucket_cols = ["0-5 Days", "5-10 Days", "10-15 Days", "15-30 Days", "Range_Total"]
             other_cols = [c for c in res.columns if c not in bucket_cols and c not in ['CEE_ID', 'CEE_Name', 'L4', 'Hub']]
             st.dataframe(res[['CEE_ID', 'CEE_Name', 'L4', 'Hub'] + bucket_cols + other_cols].sort_values(by='Range_Total', ascending=False), width="stretch")
 
         with t_watchlist:
-            st.subheader("Detailed Customer Misuse Investigation")
+            st.subheader("Deep-Dive: Fraud & Misuse Watchlist")
             watch_df = final_df.copy()
             watch_df['Days_Old'] = watch_df['Date'].apply(lambda x: (end_date - x).days if pd.notnull(x) else 0)
             
