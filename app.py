@@ -6,9 +6,12 @@ from datetime import datetime, timedelta
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 
+# Silence the downcasting warning globally
+pd.set_option('future.no_silent_downcasting', True)
+
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
 st.markdown("### Combined: CEE Performance & Customer Refund Misuse")
-st.info("Frozen Logic: VIP Filter | Dynamic Date Columns | Refund Aging | Disposition Levels")
+st.info("Frozen Logic: VIP Filter | Dynamic Date Columns | Refund Aging | 5-Day Buckets")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload 'complaints.csv' or 'CmsTicketDetailReport.csv' files", type="csv", accept_multiple_files=True)
@@ -44,13 +47,13 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
+            # --- THUMB RULE: bbdaily-b2c ONLY ---
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
-                    # VIP Logic
                     if 'Is_VIP' in temp_df.columns:
                         temp_df['Is_VIP'] = temp_df['Is_VIP'].astype(str).str.lower().map({'yes': True, 'true': True, '1': True, '1.0': True}).fillna(False)
                     else:
@@ -58,6 +61,7 @@ if uploaded_files:
 
                     def clean_val(val):
                         v = str(val).strip()
+                        # Explicitly return None to avoid future downcasting warnings
                         return v if v not in ['', 'nan', '-', 'None', '0', '0.0'] else None
 
                     temp_df['CEE_Name'] = temp_df['CEE_Name_1'].apply(clean_val).fillna(temp_df['CEE_Name_2'].apply(clean_val)).fillna("Unknown_CEE")
@@ -108,6 +112,8 @@ if uploaded_files:
                 day_counts = data[data['Date'] == current].groupby(group_cols).size().reset_index(name=str(current))
                 matrix = matrix.merge(day_counts, on=group_cols, how='left').fillna(0)
                 current += timedelta(days=1)
+            
+            # Buckets logic
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, start_off, end_off in buckets:
                 b_end = e_date - timedelta(days=start_off)
@@ -115,10 +121,15 @@ if uploaded_files:
                 mask_b = (data['Date'] >= b_start) & (data['Date'] <= b_end)
                 b_counts = data[mask_b].groupby(group_cols).size().reset_index(name=label)
                 matrix = matrix.merge(b_counts, on=group_cols, how='left').fillna(0)
+            
+            # Ensure integer counts
+            for col in matrix.columns:
+                if col not in group_cols:
+                    matrix[col] = matrix[col].astype(int)
             return matrix
 
         with tab1:
-            st.subheader("Dynamic CEE Matrix")
+            st.subheader("Dynamic CEE Performance Matrix")
             res = generate_dynamic_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City'], start_date, end_date)
             bucket_cols = ["0-5 Days", "5-10 Days", "10-15 Days", "15-30 Days", "Range_Total"]
             other_cols = [c for c in res.columns if c not in bucket_cols and c not in ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City']]
@@ -127,21 +138,19 @@ if uploaded_files:
 
         with tab2:
             st.subheader("Customer Watchlist (Detailed Dispositions & Refund Aging)")
-            
-            # Filter for tickets where a refund was involved to calculate aging accurately
             refund_df = final_df.copy()
-            refund_df['Days_Since_Refund'] = refund_df['Date'].apply(lambda x: (end_date - x).days if pd.notnull(x) else 0)
+            # Calculate days since ticket creation relative to selected "To Date"
+            refund_df['Days_Since_Ticket'] = refund_df['Date'].apply(lambda x: (end_date - x).days if pd.notnull(x) else 0)
             
             cust = refund_df.groupby(['Member', 'Is_VIP', 'Hub', 'City', 'L4', 'L5']).agg(
                 Refund_Tickets=('Is_Refund', 'sum'),
                 Total_Complaints=('Member', 'count'),
-                Avg_Refund_Age_Days=('Days_Since_Refund', 'mean')
+                Avg_Ticket_Age_Days=('Days_Since_Ticket', 'mean')
             ).reset_index()
             
             cust['Refund_Ratio_%'] = (cust['Refund_Tickets'] / cust['Total_Complaints'] * 100).round(1)
-            cust['Avg_Refund_Age_Days'] = cust['Avg_Refund_Age_Days'].round(1)
+            cust['Avg_Ticket_Age_Days'] = cust['Avg_Ticket_Age_Days'].round(1)
             
-            # Sort by highest refund tickets
             st.dataframe(cust.sort_values(by='Refund_Tickets', ascending=False).head(200), width="stretch")
 
     else:
