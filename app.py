@@ -3,12 +3,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-# --- 1. PAGE CONFIGURATION ---
-st.set_config(layout="wide", page_title="bbdaily Integrity Master Tower")
+# --- 1. PAGE CONFIGURATION (FIXED ERROR HERE) ---
+st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
 st.markdown("### Combined: CEE Performance & Customer Refund Misuse")
-st.info("Frozen Logic: Full 30-Day Matrix | Sidebar L4/L5 Filters | Clean CEE Mapping")
+st.info("Frozen Logic: Full 30-Day Rolling Matrix | Sidebar L4/L5 Filters | Clean CEE Mapping")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload 'complaints.csv' or 'CmsTicketDetailReport.csv' files", type="csv", accept_multiple_files=True)
@@ -23,7 +23,7 @@ if uploaded_files:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1')
             
-            # Flexible Column Mapping for CEE and Categories
+            # Flexible Column Mapping
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob'],
                 'Date_Raw': ['Date', 'Complaint Created Date & Time', 'date'],
@@ -47,7 +47,7 @@ if uploaded_files:
             
             # --- THUMB RULE: bbdaily-b2c ONLY ---
             if 'Lob' in temp_df.columns:
-                temp_df = temp_df[temp_df['Lob'] == 'bbdaily-b2c'].copy()
+                temp_df = temp_df[temp_df['Lob'].str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], dayfirst=True, errors='coerce').dt.date
@@ -60,7 +60,6 @@ if uploaded_files:
                     temp_df['CEE_Name'] = temp_df['CEE_Name_1'].apply(clean_val).fillna(temp_df['CEE_Name_2'].apply(clean_val)).fillna("Unknown_CEE")
                     temp_df['CEE_ID'] = temp_df['CEE_ID_1'].apply(clean_val).fillna(temp_df['CEE_ID_2'].apply(clean_val)).fillna("Unknown_ID")
                     
-                    # Fill other blanks
                     temp_df['L4'] = temp_df['L4'].fillna("Not Categorized")
                     temp_df['L5'] = temp_df['L5'].fillna("Not Categorized")
                     
@@ -78,13 +77,11 @@ if uploaded_files:
         # --- 3. SIDEBAR FILTERS ---
         st.sidebar.header("Global Filters")
         
-        # Date Filter
         available_dates = sorted(df['Date'].unique())
         date_range = st.sidebar.date_input("Analysis Window", [min(available_dates), max(available_dates)])
         start_date = date_range[0]
         end_date = date_range[1] if len(date_range) > 1 else date_range[0]
         
-        # City & Store Filters
         all_cities = sorted(df['City'].dropna().unique())
         selected_cities = st.sidebar.multiselect("Select City", all_cities, default=all_cities)
         
@@ -110,15 +107,14 @@ if uploaded_files:
         tab1, tab2, tab3 = st.tabs(["📊 CEE 30-Day Matrix (L4)", "🔍 CEE 30-Day Matrix (L5)", "🕵️ Customer Misuse"])
 
         def generate_full_30d_matrix(data, group_cols, anchor_date):
-            # Base group
             matrix = data.groupby(group_cols).size().reset_index(name='Total_Period')
-            # Generate 1D to 30D columns
             for d in range(1, 31):
                 label = f"{d}D"
                 cutoff = anchor_date - timedelta(days=d-1)
                 win_mask = (data['Date'] <= anchor_date) & (data['Date'] >= cutoff)
                 counts = data[win_mask].groupby(group_cols).size().reset_index(name=label)
                 matrix = matrix.merge(counts, on=group_cols, how='left').fillna(0)
+                matrix[label] = matrix[label].astype(int)
             return matrix
 
         with tab1:
@@ -143,6 +139,6 @@ if uploaded_files:
             st.dataframe(cust_matrix.sort_values(by='Refund_Incidents', ascending=False).head(50), use_container_width=True)
 
     else:
-        st.error("No 'bbdaily-b2c' data found. Please check your LOB column.")
+        st.error("No 'bbdaily-b2c' data found. Check LOB in your files.")
 else:
-    st.info("Upload your raw complaint files to begin.")
+    st.info("Awaiting file upload. Please select multiple CSV files for full 30-day view.")
