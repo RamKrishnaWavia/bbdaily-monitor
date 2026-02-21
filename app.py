@@ -8,8 +8,7 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 pd.set_option('future.no_silent_downcasting', True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.markdown("### 5-Tab Multi-Dimensional Analysis")
-st.info("Tabs: Performance Overview | CEE Summary (Aging) | CEE Overview (Raw) | Customer Summary (Aging) | Customer Overview (Raw)")
+st.info("Logic: Summary (Aging Only) | Overview (Aging + Daily) | Checkbox Grouping | bbdaily-b2c")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload CSV files", type="csv", accept_multiple_files=True)
@@ -34,8 +33,7 @@ if uploaded_files:
                 'Member_Id': ['Member Id', 'member_id', 'Member ID'],
                 'Hub': ['Hub', 'HUB', 'hub', 'FC NAME'],
                 'City': ['City', 'CITY', 'city'],
-                'VIP': ['Is VIP Customer', 'vip', 'VIP Tag'],
-                'Status': ['STATUS', 'status', 'Ticket Status']
+                'VIP': ['Is VIP Customer', 'vip', 'VIP Tag']
             }
             
             for standard, options in col_map.items():
@@ -79,40 +77,36 @@ if uploaded_files:
         with col_d2:
             end_date = st.date_input("Date To", max(available_dates))
         
-        # City & Store Filter
-        all_cities = sorted(df['City'].dropna().unique())
-        selected_cities = st.sidebar.multiselect("City Filter", all_cities, default=all_cities)
-        
-        hubs_in_cities = sorted(df[df['City'].isin(selected_cities)]['Hub'].dropna().unique())
-        selected_hubs = st.sidebar.multiselect("Store (Hub) Filter", hubs_in_cities, default=hubs_in_cities)
+        # Global Filters
+        selected_cities = st.sidebar.multiselect("City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
+        selected_hubs = st.sidebar.multiselect("Store (Hub)", sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()))
+        selected_vip = st.sidebar.multiselect("VIP Tag", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
 
-        # VIP Filter
-        vip_options = sorted(df['VIP'].unique())
-        selected_vip = st.sidebar.multiselect("VIP Tag", vip_options, default=vip_options)
-        
-        # Category Filters
-        l4_options = sorted(df['L4'].unique())
-        selected_l4 = st.sidebar.multiselect("Level 4 Filter (Empty = Total Sum)", l4_options)
-        
-        l5_filtered_options = sorted(df[df['L4'].isin(selected_l4)]['L5'].unique()) if selected_l4 else sorted(df['L5'].unique())
-        selected_l5 = st.sidebar.multiselect("Level 5 (Level)", l5_filtered_options)
+        # Category Grouping Toggles (Checkboxes)
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Grouping & Category Filters")
+        group_by_l4 = st.sidebar.checkbox("Group by Level 4", value=True)
+        group_by_l5 = st.sidebar.checkbox("Group by Level 5", value=False)
 
-        # FINAL FILTERING
-        mask = (
-            (df['Date'] >= start_date) & 
-            (df['Date'] <= end_date) & 
-            (df['City'].isin(selected_cities)) &
-            (df['Hub'].isin(selected_hubs)) &
-            (df['VIP'].isin(selected_vip))
-        )
+        # Category Filters (Multi-select)
+        l4_list = sorted(df['L4'].unique())
+        selected_l4 = st.sidebar.multiselect("L4 Filter (Filter specific items)", l4_list)
+        
+        l5_list = sorted(df[df['L4'].isin(selected_l4)]['L5'].unique()) if selected_l4 else sorted(df['L5'].unique())
+        selected_l5 = st.sidebar.multiselect("L5 Filter (Filter specific items)", l5_list)
+
+        # APPLY FILTERS
+        mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(selected_cities)) & (df['Hub'].isin(selected_hubs)) & (df['VIP'].isin(selected_vip))
         filtered_df = df[mask]
-        
         if selected_l4: filtered_df = filtered_df[filtered_df['L4'].isin(selected_l4)]
         if selected_l5: filtered_df = filtered_df[filtered_df['L5'].isin(selected_l5)]
 
-        # --- 4. AGING LOGIC FUNCTION ---
-        def generate_aging_report(data, groups, e_date):
+        # --- 4. DATA AGGREGATION ENGINE ---
+        def generate_master_report(data, groups, s_date, e_date, include_daily=False):
+            # 1. Base Range Total
             report = data.groupby(groups).size().reset_index(name='Range_Total')
+            
+            # 2. Aging Buckets
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, start_off, end_off in buckets:
                 b_end = e_date - timedelta(days=start_off)
@@ -120,63 +114,71 @@ if uploaded_files:
                 mask_b = (data['Date'] >= b_start) & (data['Date'] <= b_end)
                 b_counts = data[mask_b].groupby(groups).size().reset_index(name=label)
                 report = report.merge(b_counts, on=groups, how='left').fillna(0)
-            numeric_cols = ["0-5 Days", "5-10 Days", "10-15 Days", "15-30 Days", "Range_Total"]
+            
+            # 3. Dynamic Daily Columns
+            if include_daily:
+                curr = s_date
+                while curr <= e_date:
+                    d_str = curr.strftime('%d-%b')
+                    day_data = data[data['Date'] == curr].groupby(groups).size().reset_index(name=d_str)
+                    report = report.merge(day_data, on=groups, how='left').fillna(0)
+                    curr += timedelta(days=1)
+
+            # Convert to integers
+            numeric_cols = report.columns.difference(groups)
             report[numeric_cols] = report[numeric_cols].astype(int)
             return report
 
-        # --- 5. TABS INTERFACE (5 TABS) ---
+        # --- 5. TABS INTERFACE ---
         t_perf, t_cee_sum, t_cee_over, t_cust_sum, t_cust_over = st.tabs([
-            "📊 Performance Overview", 
-            "👤 CEE Summary", 
-            "🔍 CEE Overview", 
-            "🛒 Customer Summary", 
-            "🔎 Customer Overview"
+            "📊 Performance Overview", "👤 CEE Summary", "🔍 CEE Detailed Overview", "🛒 Customer Summary", "🔎 Customer Overview"
         ])
 
+        # Define Groupings based on Checkboxes
+        cee_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
+        if group_by_l4: cee_groups.append('L4')
+        if group_by_l5: cee_groups.append('L5')
+
+        cust_groups = ['Member_Id', 'City', 'VIP']
+        if group_by_l4: cust_groups.append('L4')
+        if group_by_l5: cust_groups.append('L5')
+
         with t_perf:
-            st.subheader(f"System Pulse: {start_date} to {end_date}")
+            st.subheader("Global Metrics")
             if not filtered_df.empty:
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total Tickets", len(filtered_df))
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Complaints", len(filtered_df))
                 m2.metric("Unique CEEs", filtered_df['CEE_ID'].nunique())
                 m3.metric("Unique Customers", filtered_df['Member_Id'].nunique())
-                m4.metric("Active Hubs", filtered_df['Hub'].nunique())
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.write("**Ticket Distribution by L4**")
-                    st.bar_chart(filtered_df['L4'].value_counts().head(10))
-                with c2:
-                    st.write("**Top 10 Cities**")
-                    st.dataframe(filtered_df['City'].value_counts().head(10), use_container_width=True)
+                st.line_chart(filtered_df.groupby('Date').size())
 
         with t_cee_sum:
-            st.subheader("CEE Aging Summary (Aggregated)")
-            group_cee = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
-            if selected_l4: group_cee.append('L4')
+            st.subheader("CEE Aging Summary (No Daily)")
             if not filtered_df.empty:
-                cee_table = generate_aging_report(filtered_df, group_cee, end_date)
-                st.dataframe(cee_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
+                summary_table = generate_master_report(filtered_df, cee_groups, start_date, end_date, include_daily=False)
+                st.dataframe(summary_table.sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t_cee_over:
-            st.subheader("CEE Detailed Raw Data")
-            view_cols = ['Date', 'CEE_ID', 'CEE_Name', 'Hub', 'Member_Id', 'L4', 'L5', 'Status']
-            st.dataframe(filtered_df[view_cols].sort_values(by='Date', ascending=False), use_container_width=True)
+            st.subheader("CEE Detailed Overview (Aging + Daily Matrix)")
+            if not filtered_df.empty:
+                detailed_table = generate_master_report(filtered_df, cee_groups, start_date, end_date, include_daily=True)
+                # Reorder to match user request: ID, Name, L4, L5, Hub, City, Buckets, Total, Daily...
+                st.dataframe(detailed_table.sort_values('Range_Total', ascending=False), use_container_width=True)
+                st.download_button("📥 Download CEE Detailed CSV", detailed_table.to_csv(index=False), "cee_detailed.csv")
 
         with t_cust_sum:
-            st.subheader("Customer Aging Summary (Aggregated)")
-            group_cust = ['Member_Id', 'City', 'VIP']
-            if selected_l4: group_cust.append('L4')
+            st.subheader("Customer Aging Summary")
             if not filtered_df.empty:
-                cust_table = generate_aging_report(filtered_df, group_cust, end_date)
-                st.dataframe(cust_table.sort_values(by='Range_Total', ascending=False), use_container_width=True)
+                cust_sum = generate_master_report(filtered_df, cust_groups, start_date, end_date, include_daily=False)
+                st.dataframe(cust_sum.sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t_cust_over:
-            st.subheader("Customer Detailed Raw Data")
-            view_cols_cust = ['Date', 'Member_Id', 'City', 'VIP', 'Hub', 'L4', 'L5', 'Status']
-            st.dataframe(filtered_df[view_cols_cust].sort_values(by='Date', ascending=False), use_container_width=True)
+            st.subheader("Customer Detailed Overview (Aging + Daily Matrix)")
+            if not filtered_df.empty:
+                cust_over = generate_master_report(filtered_df, cust_groups, start_date, end_date, include_daily=True)
+                st.dataframe(cust_over.sort_values('Range_Total', ascending=False), use_container_width=True)
 
     else:
-        st.error("No valid 'bbdaily-b2c' data found for the selected filters.")
+        st.error("No valid 'bbdaily-b2c' data found.")
 else:
-    st.info("Upload CSV files to begin. System will automatically filter for 'bbdaily-b2c' records.")
+    st.info("Please upload CSV files. Use the sidebar to toggle Grouping by L4/L5.")
