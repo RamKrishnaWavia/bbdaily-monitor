@@ -1,126 +1,110 @@
 import streamlit as st
 import pandas as pd
-from googleapiclient.discovery import build
-from google.oauth2 import service_account
 from datetime import datetime, timedelta
-import io
 
-# --- 1. CONFIGURATION ---
-FOLDER_NAME = "CEE Performance and CX Monitoring"
-SERVICE_ACCOUNT_FILE = 'credentials.json' 
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-
+# --- 1. PAGE CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Control Tower")
 
-# --- 2. GOOGLE DRIVE API CONNECTION ---
-@st.cache_resource
-def get_drive_service():
-    # Authenticates using the credentials.json file you upload to GitHub
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    return build('drive', 'v3', credentials=creds)
+st.title("🛡️ bbdaily Integrity Control Tower")
+st.markdown("### Source: `complaints.csv` Multiple Upload")
+st.info("Bypassing Drive Policy: Drag and drop all your 'complaints.csv' files here.")
 
-def fetch_latest_file_from_drive():
-    service = get_drive_service()
-    
-    # Locate the folder ID
-    folder_query = f"name = '{FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder'"
-    folder_results = service.files().list(q=folder_query).execute().get('files', [])
-    
-    if not folder_results:
-        st.error(f"Folder '{FOLDER_NAME}' not found in Drive. Ensure it is shared with the Service Account email.")
-        return None, None
-    
-    folder_id = folder_results[0]['id']
-    
-    # List the most recent CSV file in that folder
-    file_results = service.files().list(
-        q=f"'{folder_id}' in parents and mimeType = 'text/csv'",
-        orderBy="modifiedTime desc", 
-        pageSize=1
-    ).execute().get('files', [])
-    
-    if not file_results:
-        return None, None
-    
-    file_id = file_results[0]['id']
-    file_name = file_results[0]['name']
-    
-    # Download the file content into memory
-    request = service.files().get_media(fileId=file_id)
-    return io.BytesIO(request.execute()), file_name
+# --- 2. MULTI-FILE UPLOADER ---
+# This allows you to select files from different day/month folders at once.
+uploaded_files = st.file_uploader(
+    "Select all 'complaints.csv' files from your local folders", 
+    type="csv", 
+    accept_multiple_files=True
+)
 
-# --- 3. DATA PROCESSING & DASHBOARD ---
-data_stream, file_name = fetch_latest_file_from_drive()
-
-if data_stream:
-    # Load 1 Lakh Rows
-    df = pd.read_csv(data_stream)
+if uploaded_files:
+    all_data = []
     
-    # MANDATORY THUMB RULE FILTERS
-    df = df[df['Lob'] == 'bbdaily-b2c'].copy()
-    df['Date'] = pd.to_datetime(df['Complaint Created Date & Time'], errors='coerce').dt.date
+    # Process each uploaded file
+    for file in uploaded_files:
+        try:
+            temp_df = pd.read_csv(file)
+            
+            # --- THUMB RULE: Segment Filter ---
+            # Filtering for bbdaily-b2c immediately to save memory
+            if 'Lob' in temp_df.columns:
+                temp_df = temp_df[temp_df['Lob'] == 'bbdaily-b2c'].copy()
+                
+                # Convert Date and Time column
+                date_col = 'Complaint Created Date & Time'
+                if date_col in temp_df.columns:
+                    temp_df['Date'] = pd.to_datetime(temp_df[date_col], errors='coerce').dt.date
+                    all_data.append(temp_df)
+        except Exception as e:
+            st.error(f"Error processing {file.name}: {e}")
     
-    st.sidebar.info(f"📁 Processing File: {file_name}")
+    if all_data:
+        # Combine all files into one Master DataFrame
+        df = pd.concat(all_data, ignore_index=True)
+        
+        # --- 3. SIDEBAR FILTERS ---
+        st.sidebar.header("Navigation Filters")
+        
+        # Date Range Filter
+        min_date = df['Date'].min()
+        max_date = df['Date'].max()
+        date_range = st.sidebar.date_input("Analysis Period", [min_date, max_date])
+        
+        # City & Store Filters
+        all_cities = sorted(df['City'].dropna().unique())
+        selected_cities = st.sidebar.multiselect("Select City", all_cities, default=all_cities)
+        
+        # Apply City and Date filtering
+        # Check if user selected a range or single date
+        start_date = date_range[0]
+        end_date = date_range[1] if len(date_range) > 1 else date_range[0]
+        
+        filtered_df = df[
+            (df['City'].isin(selected_cities)) & 
+            (df['Date'] >= start_date) & 
+            (df['Date'] <= end_date)
+        ]
+        
+        all_hubs = sorted(filtered_df['Hub'].dropna().unique())
+        selected_hubs = st.sidebar.multiselect("Select Store/Hub", all_hubs, default=all_hubs)
+        
+        final_df = filtered_df[filtered_df['Hub'].isin(selected_hubs)]
 
-    # --- DYNAMIC FILTERS ---
-    st.sidebar.header("Navigation Filters")
-    
-    # Date Selection
-    available_dates = sorted(df['Date'].dropna().unique(), reverse=True)
-    if available_dates:
-        selected_date = st.sidebar.selectbox("Select Analysis Date", available_dates)
-    
-    # City & Store Filters
-    all_cities = sorted(df['City'].dropna().unique())
-    selected_cities = st.sidebar.multiselect("City Filter", all_cities, default=all_cities)
-    
-    city_filtered_df = df[df['City'].isin(selected_cities)]
-    all_hubs = sorted(city_filtered_df['Hub'].dropna().unique())
-    selected_hubs = st.sidebar.multiselect("Store/Hub Filter", all_hubs, default=all_hubs)
+        # --- 4. THE INTEGRITY MATRIX (Time Buckets) ---
+        # Today is considered the end of the selected range
+        analysis_end = end_date
+        intervals = {'1D': 1, '2D': 2, '3D': 3, '4D': 4, '7D': 7, '30D': 30}
+        
+        # Grouping by CEE and Agent Disposition Levels 4 (Category Rule)
+        # We also keep VIP_Complaints separated as requested.
+        cee_matrix = final_df.groupby(['CEE ID', 'CEE NAME', 'Agent Disposition Levels 4', 'Hub', 'City']).agg(
+            VIP_Complaints=('Is VIP Customer', lambda x: (x == 'Yes').sum())
+        ).reset_index()
 
-    # Apply Final Filter
-    final_df = city_filtered_df[city_filtered_df['Hub'].isin(selected_hubs)]
+        for label, days in intervals.items():
+            cutoff = analysis_end - timedelta(days=days)
+            window_mask = (final_df['Date'] <= analysis_end) & (final_df['Date'] > cutoff)
+            counts = final_df[window_mask].groupby(['CEE ID', 'Agent Disposition Levels 4']).size().reset_index(name=label)
+            cee_matrix = cee_matrix.merge(counts, on=['CEE ID', 'Agent Disposition Levels 4'], how='left').fillna(0)
 
-    # --- METRICS OVERVIEW ---
-    st.title("🛡️ bbdaily Integrity Control Tower")
-    st.markdown(f"**Reporting Period:** {selected_date} | **Segment:** bbdaily-b2c")
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Complaints", len(final_df))
-    m2.metric("VIP Complaints", len(final_df[final_df['Is VIP Customer'] == 'Yes']))
-    m3.metric("Unique CEEs Active", final_df['CEE ID'].nunique())
+        # --- 5. UI DISPLAY ---
+        st.divider()
+        st.subheader(f"CEE Integrity Matrix (Period: {start_date} to {end_date})")
+        st.write("Tracking repeat issues by Agent Disposition Levels 4.")
+        
+        # Sort by 1-Day most recent complaints
+        st.dataframe(cee_matrix.sort_values(by='1D', ascending=False), use_container_width=True)
+        
+        st.divider()
+        st.subheader("👤 High-Frequency Customer Watchlist")
+        cust_fraud = final_df.groupby(['Member Id', 'Is VIP Customer']).size().reset_index(name='Total_Complaints')
+        st.dataframe(cust_fraud.sort_values(by='Total_Complaints', ascending=False).head(50))
+        
+        # Optional: Download button for the CEE report
+        csv = cee_matrix.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Processed Report", data=csv, file_name="cee_integrity_report.csv", mime='text/csv')
 
-    # --- TIME-SERIES BUCKET LOGIC (The Core Tracker) ---
-    intervals = {'1D': 1, '2D': 2, '3D': 3, '4D': 4, '7D': 7, '30D': 30}
-    
-    # Group by CEE and Level 4 Category
-    cee_matrix = final_df.groupby(['CEE ID', 'CEE NAME', 'Agent Disposition Levels 4', 'Hub', 'City']).agg(
-        VIP_Impact=('Is VIP Customer', lambda x: (x == 'Yes').sum())
-    ).reset_index()
-
-    for label, days in intervals.items():
-        cutoff = selected_date - timedelta(days=days)
-        # Filter for the specific time window
-        window_mask = (final_df['Date'] <= selected_date) & (final_df['Date'] > cutoff)
-        counts = final_df[window_mask].groupby(['CEE ID', 'Agent Disposition Levels 4']).size().reset_index(name=label)
-        cee_matrix = cee_matrix.merge(counts, on=['CEE ID', 'Agent Disposition Levels 4'], how='left').fillna(0)
-
-    # --- VISUALIZATION ---
-    st.divider()
-    st.subheader("📍 CEE Complaint Frequency by Level 4 Category")
-    st.write("Tracking repeat issues across 1, 2, 3, 4, 7, and 30 day windows.")
-    st.dataframe(cee_matrix.sort_values(by='1D', ascending=False), use_container_width=True)
-
-    st.divider()
-    st.subheader("👤 Customer Fraud Watchlist (Member ID)")
-    # Identify customers with high refund/complaint frequency
-    fraud_df = final_df.groupby(['Member Id', 'Is VIP Customer']).agg(
-        Total_Complaints=('Ticket ID', 'count'),
-        Refund_Count=('Agent Disposition Levels 5', lambda x: (x == 'Refunded').sum())
-    ).reset_index()
-    
-    st.dataframe(fraud_df.sort_values(by='Total_Complaints', ascending=False), use_container_width=True)
-
+    else:
+        st.warning("No valid data found for the bbdaily-b2c segment in the uploaded files.")
 else:
-    st.warning("Awaiting CSV file in the 'CEE Performance and CX Monitoring' folder...")
+    st.warning("Awaiting file upload. Please drag 'complaints.csv' files here.")
