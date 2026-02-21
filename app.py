@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-# --- 1. PAGE CONFIGURATION (FIXED ERROR HERE) ---
+# --- 1. PAGE CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
@@ -17,11 +17,12 @@ if uploaded_files:
     all_data = []
     for file in uploaded_files:
         try:
+            # low_memory=False solves the DtypeWarning for mixed columns
             try:
-                temp_df = pd.read_csv(file, encoding='utf-8')
+                temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
-                temp_df = pd.read_csv(file, encoding='ISO-8859-1')
+                temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
             # Flexible Column Mapping
             col_map = {
@@ -47,12 +48,14 @@ if uploaded_files:
             
             # --- THUMB RULE: bbdaily-b2c ONLY ---
             if 'Lob' in temp_df.columns:
-                temp_df = temp_df[temp_df['Lob'].str.contains('bbdaily-b2c', case=False, na=False)].copy()
+                # Optimized filtering
+                temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
-                    temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], dayfirst=True, errors='coerce').dt.date
+                    # Fix for Date Parsing Warning
+                    temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
-                    # --- CLEANING CEE NAME & ID (Handling '-' and Blanks) ---
+                    # --- CLEANING CEE NAME & ID ---
                     def clean_val(val):
                         v = str(val).strip()
                         return v if v not in ['', 'nan', '-', 'None', '0', '0.0'] else None
@@ -76,7 +79,6 @@ if uploaded_files:
 
         # --- 3. SIDEBAR FILTERS ---
         st.sidebar.header("Global Filters")
-        
         available_dates = sorted(df['Date'].unique())
         date_range = st.sidebar.date_input("Analysis Window", [min(available_dates), max(available_dates)])
         start_date = date_range[0]
@@ -89,7 +91,6 @@ if uploaded_files:
         if 'City' in df.columns: mask = mask & (df['City'].isin(selected_cities))
         city_filtered = df[mask]
         
-        # Level 4 & Level 5 Sidebar Filters
         all_l4 = sorted(city_filtered['L4'].unique())
         selected_l4 = st.sidebar.multiselect("Filter by Level 4", all_l4, default=all_l4)
         l4_filtered = city_filtered[city_filtered['L4'].isin(selected_l4)]
@@ -100,7 +101,6 @@ if uploaded_files:
         
         all_hubs = sorted(l5_filtered['Hub'].dropna().unique())
         selected_hubs = st.sidebar.multiselect("Select Store/Hub", all_hubs, default=all_hubs)
-        
         final_df = l5_filtered[l5_filtered['Hub'].isin(selected_hubs)]
 
         # --- 4. TABS ---
@@ -120,12 +120,13 @@ if uploaded_files:
         with tab1:
             st.subheader("CEE Level 4: Rolling 30-Day Analysis")
             res_l4 = generate_full_30d_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'Hub', 'City'], end_date)
-            st.dataframe(res_l4.sort_values(by='1D', ascending=False), use_container_width=True)
+            # Updated width parameter for Streamlit 1.42+
+            st.dataframe(res_l4.sort_values(by='1D', ascending=False), width="stretch")
 
         with tab2:
             st.subheader("CEE Level 5: Rolling 30-Day Analysis")
             res_l5 = generate_full_30d_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City'], end_date)
-            st.dataframe(res_l5.sort_values(by='1D', ascending=False), use_container_width=True)
+            st.dataframe(res_l5.sort_values(by='1D', ascending=False), width="stretch")
 
         with tab3:
             st.subheader("Customer Watchlist (Refund & Misuse)")
@@ -136,9 +137,9 @@ if uploaded_files:
                 Refund_Incidents=('Is_Refund', 'sum'),
             ).reset_index()
             cust_matrix['Refund_Ratio_%'] = (cust_matrix['Refund_Incidents'] / cust_matrix['Total_Complaints'] * 100).round(1)
-            st.dataframe(cust_matrix.sort_values(by='Refund_Incidents', ascending=False).head(50), use_container_width=True)
+            st.dataframe(cust_matrix.sort_values(by='Refund_Incidents', ascending=False).head(50), width="stretch")
 
     else:
         st.error("No 'bbdaily-b2c' data found. Check LOB in your files.")
 else:
-    st.info("Awaiting file upload. Please select multiple CSV files for full 30-day view.")
+    st.info("Awaiting file upload. Select multiple CSVs for full trend.")
