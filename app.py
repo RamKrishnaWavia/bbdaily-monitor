@@ -8,7 +8,7 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
 st.markdown("### Combined: CEE Performance & Customer Refund Misuse")
-st.info("Frozen Logic: Dual Date Filters | Full 30-Day Matrix | Sidebar L4/L5 Filters")
+st.info("Frozen Logic: Dynamic Date Columns | Range Total | 5-Day Aging Buckets")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload 'complaints.csv' or 'CmsTicketDetailReport.csv' files", type="csv", accept_multiple_files=True)
@@ -17,14 +17,12 @@ if uploaded_files:
     all_data = []
     for file in uploaded_files:
         try:
-            # low_memory=False prevents DtypeWarnings for large bbdaily files
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
-            # Flexible Column Mapping
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob'],
                 'Date_Raw': ['Date', 'Complaint Created Date & Time', 'date'],
@@ -46,15 +44,12 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
-            # --- THUMB RULE: bbdaily-b2c ONLY ---
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
-                    # Robust Date Parsing
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
-                    # --- CLEANING CEE NAME & ID ---
                     def clean_val(val):
                         v = str(val).strip()
                         return v if v not in ['', 'nan', '-', 'None', '0', '0.0'] else None
@@ -62,23 +57,17 @@ if uploaded_files:
                     temp_df['CEE_Name'] = temp_df['CEE_Name_1'].apply(clean_val).fillna(temp_df['CEE_Name_2'].apply(clean_val)).fillna("Unknown_CEE")
                     temp_df['CEE_ID'] = temp_df['CEE_ID_1'].apply(clean_val).fillna(temp_df['CEE_ID_2'].apply(clean_val)).fillna("Unknown_ID")
                     
-                    temp_df['L4'] = temp_df['L4'].fillna("Not Categorized")
-                    temp_df['L5'] = temp_df['L5'].fillna("Not Categorized")
-                    
                     all_data.append(temp_df)
         except Exception as e:
             st.error(f"Error reading {file.name}: {e}")
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True).dropna(subset=['Date'])
-        
-        # Refund Logic
         refund_keywords = ['credited', 'refund', 'refunded', 'amount']
         df['Is_Refund'] = df['L4'].astype(str).str.lower().apply(lambda x: 1 if any(k in x for k in refund_keywords) else 0)
 
-        # --- 3. SIDEBAR FILTERS (DUAL DATE FIELDS) ---
+        # --- 3. SIDEBAR FILTERS ---
         st.sidebar.header("Global Filters")
-        
         available_dates = sorted(df['Date'].unique())
         col_d1, col_d2 = st.sidebar.columns(2)
         with col_d1:
@@ -86,62 +75,72 @@ if uploaded_files:
         with col_d2:
             end_date = st.date_input("To Date", max(available_dates))
         
-        # City & Category Filters
         all_cities = sorted(df['City'].dropna().unique())
         selected_cities = st.sidebar.multiselect("Select City", all_cities, default=all_cities)
         
-        mask = (df['Date'] >= start_date) & (df['Date'] <= end_date)
-        if 'City' in df.columns: mask = mask & (df['City'].isin(selected_cities))
-        city_filtered = df[mask]
+        city_mask = (df['Date'] >= start_date) & (df['Date'] <= end_date)
+        if 'City' in df.columns: city_mask = city_mask & (df['City'].isin(selected_cities))
+        city_filtered = df[city_mask]
         
-        all_l4 = sorted(city_filtered['L4'].unique())
-        selected_l4 = st.sidebar.multiselect("Filter by Level 4", all_l4, default=all_l4)
+        selected_l4 = st.sidebar.multiselect("Level 4", sorted(city_filtered['L4'].unique()), default=sorted(city_filtered['L4'].unique()))
         l4_filtered = city_filtered[city_filtered['L4'].isin(selected_l4)]
         
-        all_l5 = sorted(l4_filtered['L5'].unique())
-        selected_l5 = st.sidebar.multiselect("Filter by Level 5", all_l5, default=all_l5)
+        selected_l5 = st.sidebar.multiselect("Level 5", sorted(l4_filtered['L5'].unique()), default=sorted(l4_filtered['L5'].unique()))
         l5_filtered = l4_filtered[l4_filtered['L5'].isin(selected_l5)]
         
-        all_hubs = sorted(l5_filtered['Hub'].dropna().unique())
-        selected_hubs = st.sidebar.multiselect("Select Store/Hub", all_hubs, default=all_hubs)
-        final_df = l5_filtered[l5_filtered['Hub'].isin(selected_hubs)]
+        final_df = l5_filtered
 
         # --- 4. TABS ---
-        tab1, tab2, tab3 = st.tabs(["📊 CEE 30-Day Matrix (L4)", "🔍 CEE 30-Day Matrix (L5)", "🕵️ Customer Misuse"])
+        tab1, tab2 = st.tabs(["📊 CEE Performance Matrix", "🕵️ Customer Refund Watchlist"])
 
-        def generate_full_30d_matrix(data, group_cols, anchor_date):
-            matrix = data.groupby(group_cols).size().reset_index(name='Total_Period')
-            for d in range(1, 31):
-                label = f"{d}D"
-                cutoff = anchor_date - timedelta(days=d-1)
-                win_mask = (data['Date'] <= anchor_date) & (data['Date'] >= cutoff)
-                counts = data[win_mask].groupby(group_cols).size().reset_index(name=label)
-                matrix = matrix.merge(counts, on=group_cols, how='left').fillna(0)
-                matrix[label] = matrix[label].astype(int)
+        def generate_dynamic_matrix(data, group_cols, s_date, e_date):
+            # 1. Base Data Grouping
+            matrix = data.groupby(group_cols).size().reset_index(name='Range_Total')
+            
+            # 2. Add Individual Date Columns
+            current = s_date
+            while current <= e_date:
+                day_counts = data[data['Date'] == current].groupby(group_cols).size().reset_index(name=str(current))
+                matrix = matrix.merge(day_counts, on=group_cols, how='left').fillna(0)
+                current += timedelta(days=1)
+            
+            # 3. Add Aging Buckets (Cumulative from To Date)
+            buckets = [
+                ("0-5 Days", 0, 5),
+                ("5-10 Days", 6, 10),
+                ("10-15 Days", 11, 15),
+                ("15-30 Days", 16, 30)
+            ]
+            for label, start, end in buckets:
+                b_end = e_date - timedelta(days=start)
+                b_start = e_date - timedelta(days=end)
+                mask = (data['Date'] >= b_start) & (data['Date'] <= b_end)
+                b_counts = data[mask].groupby(group_cols).size().reset_index(name=label)
+                matrix = matrix.merge(b_counts, on=group_cols, how='left').fillna(0)
+            
             return matrix
 
         with tab1:
-            st.subheader("CEE Level 4: Rolling 30-Day Analysis")
-            res_l4 = generate_full_30d_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'Hub', 'City'], end_date)
-            st.dataframe(res_l4.sort_values(by='1D', ascending=False), width="stretch")
+            st.subheader("Dynamic CEE Matrix (Daily Breakout + Buckets)")
+            res = generate_dynamic_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City'], start_date, end_date)
+            # Make aging buckets visible at the start by reordering columns
+            cols = list(res.columns)
+            bucket_cols = ["0-5 Days", "5-10 Days", "10-15 Days", "15-30 Days", "Range_Total"]
+            other_cols = [c for c in cols if c not in bucket_cols and c not in ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City']]
+            final_cols = ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City'] + bucket_cols + other_cols
+            
+            st.dataframe(res[final_cols].sort_values(by='Range_Total', ascending=False), width="stretch")
 
         with tab2:
-            st.subheader("CEE Level 5: Rolling 30-Day Analysis")
-            res_l5 = generate_full_30d_matrix(final_df, ['CEE_ID', 'CEE_Name', 'L4', 'L5', 'Hub', 'City'], end_date)
-            st.dataframe(res_l5.sort_values(by='1D', ascending=False), width="stretch")
-
-        with tab3:
-            st.subheader("Customer Watchlist (Refund & Misuse)")
-            cust_cols = ['Member', 'Hub', 'City']
-            if 'Is_VIP' in final_df.columns: cust_cols.insert(1, 'Is_VIP')
-            cust_matrix = final_df.groupby(cust_cols).agg(
+            st.subheader("Customer Watchlist")
+            cust = final_df.groupby(['Member', 'Hub', 'City']).agg(
                 Total_Complaints=('Member', 'count'),
                 Refund_Incidents=('Is_Refund', 'sum'),
             ).reset_index()
-            cust_matrix['Refund_Ratio_%'] = (cust_matrix['Refund_Incidents'] / cust_matrix['Total_Complaints'] * 100).round(1)
-            st.dataframe(cust_matrix.sort_values(by='Refund_Incidents', ascending=False).head(50), width="stretch")
+            cust['Refund_Ratio_%'] = (cust['Refund_Incidents'] / cust['Total_Complaints'] * 100).round(1)
+            st.dataframe(cust.sort_values(by='Refund_Incidents', ascending=False).head(100), width="stretch")
 
     else:
-        st.error("No 'bbdaily-b2c' data found in these files.")
+        st.error("No 'bbdaily-b2c' data found.")
 else:
-    st.info("Awaiting file upload. Select multiple CSVs to see the 30-day trend.")
+    st.info("Upload files to see the dynamic matrix.")
