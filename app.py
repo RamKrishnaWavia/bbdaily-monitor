@@ -4,15 +4,14 @@ import numpy as np
 from datetime import datetime, timedelta
 import io
 
-# --- 1. PAGE CONFIGURATION & AGGRESSIVE UI STYLING ---
+# --- 1. PAGE CONFIGURATION & AGGRESSIVE ALIGNMENT CSS ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower", page_icon="🛡️")
 
-# Force Center Alignment and Professional UI
+# Force Center Alignment across all Data Grid elements
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
     
-    /* Target the Streamlit Data Grid for Center Alignment */
     [data-testid="stDataFrame"] div[role="gridcell"] > div,
     [data-testid="stDataFrame"] div[role="columnheader"] > div,
     [data-testid="stDataFrame"] .st-emotion-cache-1wivap2,
@@ -71,7 +70,7 @@ if uploaded_files:
             temp_df.columns = temp_df.columns.str.strip()
             temp_df['Source_CSV'] = file.name
             
-            # Date Parsing
+            # Date Parsing logic
             date_col = next((c for c in ['Complaint Created Date & Time', 'Created Date', 'Date'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
@@ -97,13 +96,13 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
-            # THUMB RULE: bbdaily-b2c ONLY
+            # bbdaily-b2c filter
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 if not temp_df.empty:
                     all_data.append(temp_df)
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error in {file.name}: {e}")
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
@@ -112,19 +111,19 @@ if uploaded_files:
         
         # --- 3. SIDEBAR CONTROLS ---
         st.sidebar.header("🎛️ Control Panel")
-        search_id = st.sidebar.text_input("🔍 Search ID", "").strip()
+        search_id = st.sidebar.text_input("🔍 Search ID (Ticket/CEE/Cust)", "").strip()
         start_date = st.sidebar.date_input("From Date", df['Date'].min())
         end_date = st.sidebar.date_input("To Date", df['Date'].max())
         
-        st.sidebar.subheader("📍 Geography & VIP")
+        st.sidebar.subheader("📍 Geography & Segment")
         sel_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
         sel_hubs = st.sidebar.multiselect("Select Hub", sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()))
         sel_vip = st.sidebar.multiselect("VIP Status", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
         
         st.sidebar.subheader("📌 Disposition Filters")
-        show_l4 = st.sidebar.checkbox("Include L4", value=True)
+        show_l4 = st.sidebar.checkbox("Include L4 in Tables", value=True)
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].dropna().unique()), default=sorted(df['L4'].dropna().unique()))
-        show_l5 = st.sidebar.checkbox("Include L5", value=False)
+        show_l5 = st.sidebar.checkbox("Include L5 in Tables", value=False)
         sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
 
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(sel_cities)) & (df['Hub'].isin(sel_hubs)) & (df['VIP'].isin(sel_vip))
@@ -141,7 +140,7 @@ if uploaded_files:
             if data.empty: return pd.DataFrame(columns=available + ['Range_Total'])
             report = data.groupby(available).size().reset_index(name='Range_Total')
             
-            # AGING BUCKETS
+            # Aging Buckets (0-5, 5-10, 10-15, 15-30)
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, s_off, e_off in buckets:
                 b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
@@ -163,32 +162,41 @@ if uploaded_files:
         # --- 5. TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["📊 Analytical Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"])
 
-        cee_cols = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP']
-        if show_l4: cee_cols.append('L4')
-        if show_l5: cee_cols.append('L5')
+        # Determine dynamic columns based on sidebar checkboxes
+        extra_cols = []
+        if show_l4: extra_cols.append('L4')
+        if show_l5: extra_cols.append('L5')
 
         with t1:
             st.markdown(f'<div class="availability-banner">Analyzing {len(f_df)} Complaints</div>', unsafe_allow_html=True)
-            col_left, col_right = st.columns(2)
-            with col_left:
+            c_l, c_r = st.columns(2)
+            with c_l:
                 st.write("**Top L4 Analysis**")
                 st.bar_chart(f_df['L4'].value_counts())
-            with col_right:
+            with c_r:
                 st.write("**VIP Distribution**")
                 st.bar_chart(f_df['VIP'].value_counts())
-            st.write("**Daily Trend**")
+            st.write("**Daily Ticket Trend**")
             st.line_chart(f_df.groupby('Date').size())
 
         with t2:
-            st.dataframe(generate_report(f_df, cee_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
+            # CEE Summary - respecting L4/L5 checkboxes
+            cee_sum_cols = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols
+            st.dataframe(generate_report(f_df, cee_sum_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t3:
-            st.dataframe(generate_report(f_df, cee_cols + ['Ticket_ID', 'Date'], start_date, end_date, True), use_container_width=True)
+            # CEE Overview - respecting L4/L5 checkboxes
+            cee_over_cols = ['CEE_ID', 'CEE_Name', 'Ticket_ID', 'Date', 'Hub', 'City', 'VIP'] + extra_cols
+            st.dataframe(generate_report(f_df, cee_over_cols, start_date, end_date, True), use_container_width=True)
 
         with t4:
-            st.dataframe(generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + (['L4'] if show_l4 else []), start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
+            # Customer Summary - FIXED: Now respects L4/L5 checkboxes
+            cust_sum_cols = ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols
+            st.dataframe(generate_report(f_df, cust_sum_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t5:
-            st.dataframe(generate_report(f_df, ['Member_Id', 'Ticket_ID', 'Date', 'City', 'VIP'], start_date, end_date, True), use_container_width=True)
+            # Customer Overview - respecting L4/L5 checkboxes
+            cust_over_cols = ['Member_Id', 'Ticket_ID', 'Date', 'Hub', 'City', 'VIP'] + extra_cols
+            st.dataframe(generate_report(f_df, cust_over_cols, start_date, end_date, True), use_container_width=True)
 else:
-    st.info("System Ready. Upload CSV files to view the 240-line logic with Aging Buckets.")
+    st.info("System Ready. Upload CSV files to activate the full 5-tab analysis with Aging Buckets.")
