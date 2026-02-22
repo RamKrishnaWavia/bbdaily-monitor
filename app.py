@@ -152,7 +152,7 @@ if uploaded_files:
                     st.line_chart(trend)
 
         with t_cee_sum:
-            st.subheader("CEE Aging Summary")
+            st.subheader("CEE Complaints Summary")
             cee_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
             if group_by_l4: cee_groups.append('L4')
             if group_by_l5: cee_groups.append('L5')
@@ -165,7 +165,7 @@ if uploaded_files:
                 st.dataframe(generate_master_report(filtered_df, cee_groups, start_date, end_date, True).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t_cust_sum:
-            st.subheader("Customer Aging Summary (Hub-wise)")
+            st.subheader("Customer Refund Summary (Hub-wise)")
             cust_groups = ['Member_Id', 'City', 'Hub', 'VIP']
             if group_by_l4: cust_groups.append('L4')
             if group_by_l5: cust_groups.append('L5')
