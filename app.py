@@ -10,33 +10,20 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower", p
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    
-    /* Aggressive Center Alignment for Data and Headers */
     [data-testid="stDataFrame"] div[role="gridcell"] > div {
-        display: flex !important;
-        justify-content: center !important;
-        align-items: center !important;
-        text-align: center !important;
+        display: flex !important; justify-content: center !important;
+        align-items: center !important; text-align: center !important;
     }
     [data-testid="stDataFrame"] th {
-        text-align: center !important;
-        vertical-align: middle !important;
-        background-color: #f1f3f6 !important;
+        text-align: center !important; vertical-align: middle !important;
+        background-color: #f1f3f6 !important; font-weight: bold !important;
     }
-
     .stDataFrame { padding-right: 50px !important; }
-    
     .availability-banner {
-        background-color: #e3f2fd;
-        color: #0d47a1;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 8px solid #1976d2;
-        font-weight: bold;
-        margin-bottom: 20px;
-        text-align: center;
+        background-color: #e3f2fd; color: #0d47a1; padding: 15px;
+        border-radius: 10px; border-left: 8px solid #1976d2;
+        font-weight: bold; margin-bottom: 20px; text-align: center;
     }
-    
     section[data-testid="stSidebar"] { width: 400px !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -67,18 +54,19 @@ if uploaded_files:
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date'] = temp_df['Date_Parsed'].dt.date
             
-            # Mapping
+            # Mapping (Including Refund Logic)
             col_map = {
                 'Lob': ['Lob', 'LOB', 'Line of Business'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number'],
                 'L4': ['Agent Disposition Levels 4', 'Level 4', 'Category'],
                 'L5': ['Agent Disposition Levels 5', 'Level 5', 'Sub Category'],
                 'CEE_Name': ['Cee Name', 'CEE NAME', 'Delivery Executive'],
-                'CEE_ID': ['CEE Number', 'CEE ID', 'DE ID', 'cee_id'],
+                'CEE_ID': ['CEE Number', 'CEE ID', 'DE ID'],
                 'Member_Id': ['Member Id', 'Member ID', 'Customer ID'],
                 'Hub': ['Hub', 'HUB', 'FC NAME', 'Hub Name', 'Store'],
                 'City': ['City', 'CITY'],
-                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip']
+                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip'],
+                'Refund_Amount': ['Refund Amount', 'Refund Value', 'Refund', 'Amount']
             }
             for standard, options in col_map.items():
                 for opt in options:
@@ -86,7 +74,10 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
-            # Filter bbdaily-b2c (The Thumb Rule)
+            # Data Cleanup
+            if 'Refund_Amount' in temp_df.columns:
+                temp_df['Refund_Amount'] = pd.to_numeric(temp_df['Refund_Amount'], errors='coerce').fillna(0)
+            
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 if not temp_df.empty:
@@ -96,117 +87,89 @@ if uploaded_files:
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
-        # Ensure VIP is treated as string for consistent filtering
-        if 'VIP' in df.columns:
-            df['VIP'] = df['VIP'].astype(str).str.strip().replace(['nan', 'None', '0', '0.0'], 'No')
+        if 'VIP' in df.columns: df['VIP'] = df['VIP'].astype(str).replace(['nan', '0', '0.0'], 'No')
         
-        # --- 3. SIDEBAR CONTROLS ---
-        st.sidebar.header("🎛️ Master Control Panel")
+        # --- 3. SIDEBAR ---
+        st.sidebar.header("🎛️ Control Panel")
+        search_id = st.sidebar.text_input("🔍 Search ID", "").strip()
+        start_date = st.sidebar.date_input("From", df['Date'].min())
+        end_date = st.sidebar.date_input("To", df['Date'].max())
         
-        # Search & Dates
-        search_id = st.sidebar.text_input("🔍 Search ID (Ticket/CEE/Cust)", "").strip()
-        start_date = st.sidebar.date_input("From Date", df['Date'].min())
-        end_date = st.sidebar.date_input("To Date", df['Date'].max())
+        st.sidebar.subheader("📍 Geography & VIP")
+        sel_cities = st.sidebar.multiselect("City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
+        sel_hubs = st.sidebar.multiselect("Hub", sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()))
+        sel_vip = st.sidebar.multiselect("VIP Status", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
         
-        st.sidebar.markdown("---")
-        
-        # Location & VIP Filters
-        st.sidebar.subheader("📍 Geography & Segment")
-        unique_cities = sorted(df['City'].unique()) if 'City' in df.columns else []
-        sel_cities = st.sidebar.multiselect("Select City", unique_cities, default=unique_cities)
-        
-        unique_hubs = sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()) if 'Hub' in df.columns else []
-        sel_hubs = st.sidebar.multiselect("Select Hub", unique_hubs, default=unique_hubs)
-        
-        # RESTORED VIP FILTER
-        unique_vip = sorted(df['VIP'].unique()) if 'VIP' in df.columns else []
-        sel_vip = st.sidebar.multiselect("VIP Status Filter", unique_vip, default=unique_vip)
-        
-        st.sidebar.markdown("---")
-        
-        # Disposition Controls (L4/L5)
         st.sidebar.subheader("📌 Disposition Controls")
-        show_l4 = st.sidebar.checkbox("Show L4 in Tables", value=True)
-        unique_l4 = sorted(df['L4'].dropna().unique()) if 'L4' in df.columns else []
-        sel_l4 = st.sidebar.multiselect("Filter L4 Categories", unique_l4, default=unique_l4)
-        
-        show_l5 = st.sidebar.checkbox("Show L5 in Tables", value=False)
-        unique_l5 = sorted(df['L5'].dropna().unique()) if 'L5' in df.columns else []
-        sel_l5 = st.sidebar.multiselect("Filter L5 Categories", unique_l5, default=unique_l5)
+        show_l4 = st.sidebar.checkbox("Show L4", value=True)
+        sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].dropna().unique()), default=sorted(df['L4'].dropna().unique()))
+        show_l5 = st.sidebar.checkbox("Show L5", value=False)
+        sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
 
-        # Apply Global Mask
-        mask = (df['Date'] >= start_date) & (df['Date'] <= end_date)
-        if 'City' in df.columns: mask &= df['City'].isin(sel_cities)
-        if 'Hub' in df.columns: mask &= df['Hub'].isin(sel_hubs)
-        if 'VIP' in df.columns: mask &= df['VIP'].isin(sel_vip)
+        # Masking
+        mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(sel_cities)) & (df['Hub'].isin(sel_hubs)) & (df['VIP'].isin(sel_vip))
         if 'L4' in df.columns: mask &= df['L4'].isin(sel_l4)
         if 'L5' in df.columns: mask &= df['L5'].isin(sel_l5)
-        
         f_df = df[mask]
-        if search_id:
-            f_df = f_df[(f_df['Ticket_ID'].astype(str).str.contains(search_id)) | 
-                        (f_df['CEE_ID'].astype(str).str.contains(search_id)) | 
-                        (f_df['Member_Id'].astype(str).str.contains(search_id))]
 
         # --- 4. ENGINE FUNCTIONS ---
-        def generate_report(data, groups, s_date, e_date, include_daily=False):
-            available_groups = [g for g in groups if g in data.columns]
-            if data.empty: return pd.DataFrame(columns=available_groups + ['Range_Total'])
+        def generate_report(data, groups, include_daily=False):
+            available = [g for g in groups if g in data.columns]
+            if data.empty: return pd.DataFrame(columns=available + ['Tickets', 'Refund_Value'])
             
-            report = data.groupby(available_groups).size().reset_index(name='Range_Total')
-            buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
-            for label, s_off, e_off in buckets:
-                b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
-                b_mask = (data['Date'] >= b_start) & (data['Date'] <= b_end)
-                b_counts = data[b_mask].groupby(available_groups).size().reset_index(name=label)
-                report = report.merge(b_counts, on=available_groups, how='left').fillna(0)
+            # Aggregation logic for both counts and values
+            report = data.groupby(available).agg(
+                Tickets=('Ticket_ID', 'count'),
+                Refund_Value=('Refund_Amount', 'sum')
+            ).reset_index()
             
             if include_daily:
-                curr = s_date
-                while curr <= e_date:
+                # Add daily counts
+                curr = start_date
+                while curr <= end_date:
                     d_str = curr.strftime('%d-%b')
-                    day_data = data[data['Date'] == curr].groupby(available_groups).size().reset_index(name=d_str)
-                    report = report.merge(day_data, on=available_groups, how='left').fillna(0)
+                    day_data = data[data['Date'] == curr].groupby(available).size().reset_index(name=d_str)
+                    report = report.merge(day_data, on=available, how='left').fillna(0)
                     curr += timedelta(days=1)
-            
-            for c in report.columns.difference(available_groups): report[c] = report[c].astype(int)
             return report
 
         def style_and_show(data, key):
-            if data.empty:
-                st.warning("No data found.")
-                return
+            if data.empty: st.warning("No data found."); return
             st.dataframe(data, use_container_width=True)
             st.download_button("📥 Download CSV", data.to_csv(index=False), file_name=f"{key}.csv", key=f"dl_{key}")
 
         # --- 5. TABS ---
-        t_dash, t_cee, t_cust = st.tabs(["📊 Performance Dashboard", "👤 CEE Analysis", "🛒 Customer Analysis"])
-        
+        t_dash, t_cee_s, t_cee_o, t_cust_s, t_cust_o = st.tabs([
+            "📊 Analytical Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"
+        ])
+
         base_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP']
         if show_l4: base_groups.append('L4')
         if show_l5: base_groups.append('L5')
 
         with t_dash:
             if not f_df.empty:
-                st.markdown(f'<div class="availability-banner">📅 Active Data Range: {f_df["Date"].min()} to {f_df["Date"].max()}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="availability-banner">📅 Data Coverage: {f_df["Date"].min()} to {f_df["Date"].max()}</div>', unsafe_allow_html=True)
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Tickets", len(f_df))
-                c2.metric("CEEs", f_df['CEE_ID'].nunique())
-                c3.metric("Cities", f_df['City'].nunique())
-                c4.metric("VIP Tickets", len(f_df[f_df['VIP'] == 'Yes']) if 'VIP' in f_df.columns else 0)
-                
-                st.markdown("---")
-                st.write("**Integrity Audit: Source Files**")
-                style_and_show(f_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows').sort_values('Date'), "audit")
+                c2.metric("Refund Value", f"₹{f_df['Refund_Amount'].sum():,.0f}")
+                c3.metric("Unique CEEs", f_df['CEE_ID'].nunique())
+                c4.metric("VIP Count", len(f_df[f_df['VIP'] == 'Yes']))
+                style_and_show(f_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows'), "audit")
 
-        with t_cee:
-            style_and_show(generate_report(f_df, base_groups, start_date, end_date, True).sort_values('Range_Total', ascending=False), "cee_report")
+        with t_cee_s:
+            style_and_show(generate_report(f_df, base_groups).sort_values('Tickets', ascending=False), "cee_sum")
 
-        with t_cust:
-            m_groups = ['Member_Id', 'City', 'Hub', 'VIP']
-            if show_l4: m_groups.append('L4')
-            if show_l5: m_groups.append('L5')
-            style_and_show(generate_report(f_df, m_groups, start_date, end_date), "cust_report")
+        with t_cee_o:
+            style_and_show(generate_report(f_df, base_groups + ['Ticket_ID', 'Date'], True), "cee_over")
+
+        with t_cust_s:
+            style_and_show(generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP']).sort_values('Tickets', ascending=False), "cust_sum")
+
+        with t_cust_o:
+            # Explicitly added Refund columns for Customer Overview
+            cust_groups = ['Member_Id', 'Ticket_ID', 'Date', 'City', 'Hub', 'VIP', 'L4']
+            style_and_show(generate_report(f_df, cust_groups), "cust_over")
 
 else:
-    st.info("Upload CSV files. VIP, L4, and L5 filters will appear in the sidebar automatically.")
+    st.info("Upload CSV files. Refund values will be calculated automatically.")
