@@ -96,7 +96,7 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
-            # bbdaily-b2c filter
+            # bbdaily-b2c filter (Thumb Rule)
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 if not temp_df.empty:
@@ -140,7 +140,7 @@ if uploaded_files:
             if data.empty: return pd.DataFrame(columns=available + ['Range_Total'])
             report = data.groupby(available).size().reset_index(name='Range_Total')
             
-            # Aging Buckets (0-5, 5-10, 10-15, 15-30)
+            # Aging Buckets
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, s_off, e_off in buckets:
                 b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
@@ -162,41 +162,47 @@ if uploaded_files:
         # --- 5. TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["📊 Analytical Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"])
 
-        # Determine dynamic columns based on sidebar checkboxes
+        # Dynamic columns list
         extra_cols = []
         if show_l4: extra_cols.append('L4')
         if show_l5: extra_cols.append('L5')
 
         with t1:
-            st.markdown(f'<div class="availability-banner">Analyzing {len(f_df)} Complaints</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="availability-banner">📊 Analytical Summary Dashboard</div>', unsafe_allow_html=True)
+            
+            # --- NEW METRICS SECTION ---
+            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+            m_col1.metric("Total Tickets", len(f_df))
+            m_col2.metric("Total CEEs", f_df['CEE_ID'].nunique() if 'CEE_ID' in f_df.columns else 0)
+            m_col3.metric("Total Customers", f_df['Member_Id'].nunique() if 'Member_Id' in f_df.columns else 0)
+            m_col4.metric("L4 Categories", f_df['L4'].nunique() if 'L4' in f_df.columns else 0)
+            m_col5.metric("L5 Categories", f_df['L5'].nunique() if 'L5' in f_df.columns else 0)
+            st.markdown("---")
+
             c_l, c_r = st.columns(2)
             with c_l:
-                st.write("**Top L4 Analysis**")
+                st.write("**Top L4 Categories**")
                 st.bar_chart(f_df['L4'].value_counts())
             with c_r:
-                st.write("**VIP Distribution**")
+                st.write("**VIP Mix**")
                 st.bar_chart(f_df['VIP'].value_counts())
-            st.write("**Daily Ticket Trend**")
+            st.write("**Daily Volume Trend**")
             st.line_chart(f_df.groupby('Date').size())
 
         with t2:
-            # CEE Summary - respecting L4/L5 checkboxes
             cee_sum_cols = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols
             st.dataframe(generate_report(f_df, cee_sum_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t3:
-            # CEE Overview - respecting L4/L5 checkboxes
             cee_over_cols = ['CEE_ID', 'CEE_Name', 'Ticket_ID', 'Date', 'Hub', 'City', 'VIP'] + extra_cols
             st.dataframe(generate_report(f_df, cee_over_cols, start_date, end_date, True), use_container_width=True)
 
         with t4:
-            # Customer Summary - FIXED: Now respects L4/L5 checkboxes
             cust_sum_cols = ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols
             st.dataframe(generate_report(f_df, cust_sum_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t5:
-            # Customer Overview - respecting L4/L5 checkboxes
             cust_over_cols = ['Member_Id', 'Ticket_ID', 'Date', 'Hub', 'City', 'VIP'] + extra_cols
             st.dataframe(generate_report(f_df, cust_over_cols, start_date, end_date, True), use_container_width=True)
 else:
-    st.info("System Ready. Upload CSV files to activate the full 5-tab analysis with Aging Buckets.")
+    st.info("Upload CSV files. The dashboard metrics will update based on your selected date range.")
