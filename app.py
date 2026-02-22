@@ -4,23 +4,53 @@ import numpy as np
 from datetime import datetime, timedelta
 import io
 
-# --- 1. PAGE CONFIGURATION & STYLING ---
+# --- 1. PAGE CONFIGURATION & DEEP UI STYLING ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower", page_icon="🛡️")
 
-# Custom CSS to improve UI professional look and table readability
+# Injected CSS for center alignment, table visibility, and professional metrics
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .stDataFrame { border: 1px solid #e6e9ef; border-radius: 10px; }
-    .css-10trblm { color: #FF4B4B; }
+    /* Main Background and Font */
+    .main { background-color: #f8f9fa; }
+    
+    /* Center Align all Table Cells and Headers */
+    [data-testid="stTable"] td, [data-testid="stTable"] th {
+        text-align: center !important;
+    }
+    [data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
+        text-align: center !important;
+        vertical-align: middle !important;
+    }
+    
+    /* Metric Card Styling */
+    [data-testid="stMetricValue"] {
+        font-size: 32px;
+        font-weight: bold;
+        text-align: center;
+        color: #1f77b4;
+    }
+    [data-testid="stMetricLabel"] {
+        text-align: center;
+        font-size: 16px;
+    }
+
+    /* Fix for last column visibility and horizontal scroll */
+    .stDataFrame div[data-testid="stHorizontalBlock"] {
+        padding-right: 30px;
+    }
+    
+    /* Styling the sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #f1f3f6;
+        width: 350px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.info("System Status: Strict DD-MM-YYYY Date Parsing | Multi-ID Search | File Source Auditing")
+st.markdown("---")
 
-# --- 2. MULTI-FILE UPLOADER ---
+# --- 2. MULTI-FILE UPLOADER & PROCESSING ---
 uploaded_files = st.file_uploader("📂 Upload Complaint Dump (CSV Files)", type="csv", accept_multiple_files=True)
 
 if uploaded_files:
@@ -28,20 +58,20 @@ if uploaded_files:
     
     for file in uploaded_files:
         try:
-            # Handle encodings (UTF-8 or ISO-8859-1)
+            # Handle encodings - UTF-8 or Excel-Specific ISO
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
-            # Record source file for verification
+            # Record source file and clean column whitespace
             temp_df['Source_CSV'] = file.name
             temp_df.columns = temp_df.columns.str.strip()
             
-            # --- STRICT DATE LOCK LOGIC (DD-MM-YYYY) ---
-            # Prioritize 'Complaint Created Date & Time'
-            date_priority = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date']
+            # --- ROBUST DATE PARSING (FORCED DD-MM-YYYY) ---
+            # Prioritizing your specific column: "Complaint Created Date & Time"
+            date_priority = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date', 'Complaint Date']
             date_col = None
             for candidate in date_priority:
                 if candidate in temp_df.columns:
@@ -49,14 +79,9 @@ if uploaded_files:
                     break
             
             if date_col:
-                # Force dayfirst=True to ensure 01-02 is Feb 1st, NOT Jan 2nd
-                temp_df['Date_Parsed'] = pd.to_datetime(
-                    temp_df[date_col], 
-                    dayfirst=True, 
-                    errors='coerce'
-                )
-                
-                # Cleanup rows with unparseable dates
+                # FORCE dayfirst=True to stop 01-02 being Jan 2nd (Fixed the Jan data mystery)
+                temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
+                # Remove unparseable dates to maintain integrity
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date'] = temp_df['Date_Parsed'].dt.date
             
@@ -65,7 +90,7 @@ if uploaded_files:
                 'Lob': ['Lob', 'LOB', 'lob', 'Line of Business'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Complaint Number', 'Ticket Number', 'id'],
                 'L4': ['Level 4', 'Agent Disposition Levels 4', 'Category', 'L4 Category'],
-                'L5': ['Level 5', 'Agent Disposition Levels 5', 'Sub Category', 'L5 Category'],
+                'L5': ['Level 5', 'Agent Disposition Levels 5', 'Sub Category'],
                 'CEE_Name_1': ['Cee Name', 'Cee name', 'CEE NAME', 'Delivery Executive'],
                 'CEE_ID_1': ['CEE Number', 'cee_number', 'CEE ID', 'cee_id', 'DE ID'],
                 'Member_Id': ['Member Id', 'member_id', 'Member ID', 'Customer ID'],
@@ -85,7 +110,7 @@ if uploaded_files:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date' in temp_df.columns:
-                    # Utility function for cleaning data noise
+                    # Final string cleanup for IDs
                     def clean_val(val):
                         v = str(val).strip()
                         return v if v not in ['', 'nan', '-', 'None', '0', '0.0'] else "Unknown"
@@ -94,67 +119,65 @@ if uploaded_files:
                     temp_df['CEE_ID'] = temp_df['CEE_ID_1'].apply(clean_val)
                     temp_df['Ticket_ID'] = temp_df['Ticket_ID'].apply(clean_val)
                     temp_df['Member_Id'] = temp_df['Member_Id'].apply(clean_val)
-                    temp_df['L4'] = temp_df['L4'].astype(str).str.strip()
-                    temp_df['L5'] = temp_df['L5'].astype(str).str.strip()
-                    temp_df['VIP'] = temp_df['VIP'].astype(str).str.strip()
-                    
                     all_data.append(temp_df)
-            else:
-                st.warning(f"File {file.name} ignored: 'Lob' column missing.")
         except Exception as e:
-            st.error(f"Critical Error processing {file.name}: {e}")
+            st.error(f"Critical Error in File {file.name}: {e}")
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
         
         # --- 3. SIDEBAR CONTROLS ---
-        st.sidebar.header("🎛️ Control Panel")
+        st.sidebar.header("🎛️ Dashboard Control Panel")
         st.sidebar.markdown("---")
         
-        # Integrated Search Feature
-        st.sidebar.subheader("🔍 Multi-ID Search")
-        search_id = st.sidebar.text_input("Enter Ticket, CEE, or Member ID", "").strip()
+        # Integrated Search Logic (Ticket/CEE/Member)
+        st.sidebar.subheader("🔍 Integrated Search")
+        search_id = st.sidebar.text_input("Enter ID (Ticket/CEE/Member)", "").strip()
         
-        # Date Logic
+        # Global Date Range
         col_d1, col_d2 = st.sidebar.columns(2)
         with col_d1:
-            start_date = st.sidebar.date_input("Date From", df['Date'].min())
+            start_date = st.sidebar.date_input("From", df['Date'].min())
         with col_d2:
-            end_date = st.sidebar.date_input("Date To", df['Date'].max())
+            end_date = st.sidebar.date_input("To", df['Date'].max())
         
         # Geographic Filters
-        selected_cities = st.sidebar.multiselect("City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
-        selected_hubs = st.sidebar.multiselect("Store (Hub)", sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()))
+        selected_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
+        selected_hubs = st.sidebar.multiselect("Select Store (Hub)", sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()))
         
-        # Grouping Control
-        st.sidebar.subheader("Detailed Grouping")
-        group_by_l4 = st.sidebar.checkbox("Show Level 4 Category", value=True)
-        group_by_l5 = st.sidebar.checkbox("Show Level 5 Category", value=False)
+        # Dynamic Grouping Control
+        st.sidebar.subheader("Table Grouping Options")
+        group_by_l4 = st.sidebar.checkbox("Show L4 Category", value=True)
+        group_by_l5 = st.sidebar.checkbox("Show L5 Category", value=False)
 
-        # APPLY GLOBAL FILTERS
+        # Apply Master Mask
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(selected_cities)) & (df['Hub'].isin(selected_hubs))
-        filtered_df = df[mask]
+        f_df = df[mask]
         
+        # Search Filter (Cross-column)
         if search_id:
-            filtered_df = filtered_df[
-                (filtered_df['Ticket_ID'].astype(str).str.contains(search_id, case=False)) |
-                (filtered_df['CEE_ID'].astype(str).str.contains(search_id, case=False)) |
-                (filtered_df['Member_Id'].astype(str).str.contains(search_id, case=False))
+            f_df = f_df[
+                (f_df['Ticket_ID'].astype(str).str.contains(search_id, case=False)) |
+                (f_df['CEE_ID'].astype(str).str.contains(search_id, case=False)) |
+                (f_df['Member_Id'].astype(str).str.contains(search_id, case=False))
             ]
 
-        # --- 4. ANALYTICS ENGINE ---
+        # --- 4. AGGREGATION ENGINE (AGING & MATRIX) ---
         def generate_report(data, groups, s_date, e_date, include_daily=False):
-            if data.empty: return pd.DataFrame()
+            # Safety Guard: If no data, return template with correct columns to prevent Sort Errors
+            if data.empty:
+                return pd.DataFrame(columns=groups + ['Range_Total'])
+            
             report = data.groupby(groups).size().reset_index(name='Range_Total')
             
-            # Aging Buckets (Reference point is End Date)
+            # Rolling Aging Buckets
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, s_off, e_off in buckets:
                 b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
                 b_counts = data[(data['Date'] >= b_start) & (data['Date'] <= b_end)].groupby(groups).size().reset_index(name=label)
                 report = report.merge(b_counts, on=groups, how='left').fillna(0)
             
-            # Daily Matrix Generation
+            # Daily Frequency Matrix
             if include_daily:
                 curr = s_date
                 while curr <= e_date:
@@ -163,60 +186,62 @@ if uploaded_files:
                     report = report.merge(day_data, on=groups, how='left').fillna(0)
                     curr += timedelta(days=1)
             
+            # Ensure all numerical columns are Integers
             numeric_cols = report.columns.difference(groups)
             report[numeric_cols] = report[numeric_cols].astype(int)
             return report
 
-        # --- 5. TABS & VISUALIZATION ---
-        t_perf, t_cee_sum, t_cee_over, t_cust_sum, t_cust_over = st.tabs([
-            "📊 Executive Dashboard", "👤 CEE Summary", "🔍 CEE Detailed", "🛒 Customer Summary", "🔎 Customer Detailed"
+        # --- 5. TABBED INTERFACE ---
+        t_dash, t_cee_sum, t_cee_det, t_cust_sum, t_cust_det = st.tabs([
+            "📊 Dashboard", "👤 CEE Summary", "🔍 CEE Detailed", "🛒 Customer Summary", "🔎 Customer Detailed"
         ])
 
-        # Define Dynamic Grouping Fields
-        cee_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
-        if group_by_l4: cee_groups.append('L4')
-        if group_by_l5: cee_groups.append('L5')
+        # Define Dynamic Headers
+        base_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
+        if group_by_l4: base_groups.append('L4')
+        if group_by_l5: base_groups.append('L5')
         
         cust_groups = ['Member_Id', 'City', 'Hub', 'VIP']
         if group_by_l4: cust_groups.append('L4')
         if group_by_l5: cust_groups.append('L5')
 
-        with t_perf:
-            st.subheader("Complaint Trends & Source Integrity")
-            if not filtered_df.empty:
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Total Tickets", f"{len(filtered_df):,}")
-                col2.metric("Active CEEs", filtered_df['CEE_ID'].nunique())
-                col3.metric("Impacted Customers", filtered_df['Member_Id'].nunique())
-                col4.metric("Avg Daily Volume", round(len(filtered_df)/max((end_date-start_date).days, 1), 1))
+        with t_dash:
+            st.subheader("Executive Stats & File Integrity Audit")
+            if not f_df.empty:
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total Complaints", len(f_df))
+                m2.metric("Active CEEs", f_df['CEE_ID'].nunique())
+                m3.metric("Impacted Customers", f_df['Member_Id'].nunique())
+                m4.metric("Average/Day", round(len(f_df)/max((end_date-start_date).days, 1), 1))
                 
                 st.markdown("---")
-                st.write("**File Upload Audit (Verify Date Ranges by File Name)**")
-                file_summary = filtered_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows')
-                st.dataframe(file_summary.sort_values(['Date', 'Source_CSV']), use_container_width=True)
-                st.line_chart(filtered_df.groupby('Date').size())
+                st.write("**File Source Verification (Identify January Row Sources)**")
+                source_check = f_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows')
+                st.dataframe(source_check.sort_values(['Date', 'Source_CSV']), use_container_width=True)
+            else:
+                st.warning("No data found for the selected range. Check 'Lob' or Date format.")
 
         with t_cee_sum:
-            st.subheader("CEE Aging Performance")
-            res_cee = generate_report(filtered_df, cee_groups, start_date, end_date, False)
-            st.dataframe(res_cee.sort_values('Range_Total', ascending=False), use_container_width=True)
+            res_cee = generate_report(f_df, base_groups, start_date, end_date, False)
+            if not res_cee.empty:
+                st.dataframe(res_cee.sort_values('Range_Total', ascending=False), use_container_width=True)
 
-        with t_cee_over:
-            st.subheader("CEE Audit (Includes Ticket IDs)")
-            res_cee_over = generate_report(filtered_df, cee_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
-            st.dataframe(res_cee_over.sort_values('Date', ascending=False), use_container_width=True)
+        with t_cee_det:
+            res_cee_d = generate_report(f_df, base_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
+            if not res_cee_d.empty:
+                st.dataframe(res_cee_d.sort_values('Date', ascending=False), use_container_width=True)
 
         with t_cust_sum:
-            st.subheader("Customer Frequent Complaint Summary")
-            res_cust = generate_report(filtered_df, cust_groups, start_date, end_date, False)
-            st.dataframe(res_cust.sort_values('Range_Total', ascending=False), use_container_width=True)
+            res_cust = generate_report(f_df, cust_groups, start_date, end_date, False)
+            if not res_cust.empty:
+                st.dataframe(res_cust.sort_values('Range_Total', ascending=False), use_container_width=True)
 
-        with t_cust_over:
-            st.subheader("Customer Fraud Audit (Full History)")
-            res_cust_over = generate_report(filtered_df, cust_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
-            st.dataframe(res_cust_over.sort_values('Date', ascending=False), use_container_width=True)
+        with t_cust_det:
+            res_cust_d = generate_report(f_df, cust_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
+            if not res_cust_d.empty:
+                st.dataframe(res_cust_d.sort_values('Date', ascending=False), use_container_width=True)
             
     else:
-        st.error("No valid bbdaily-b2c records found. Please check date format (DD-MM-YYYY) and filters.")
+        st.error("No valid bbdaily-b2c data found in the uploaded files.")
 else:
-    st.info("System Ready. Please upload CSV files to begin analytics.")
+    st.info("System Ready. Please upload one or more CSV files to start the integrity analysis.")
