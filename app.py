@@ -70,14 +70,14 @@ if uploaded_files:
             temp_df.columns = temp_df.columns.str.strip()
             temp_df['Source_CSV'] = file.name
             
-            # Date Parsing logic
+            # Date Parsing logic (DD-MM-YYYY)
             date_col = next((c for c in ['Complaint Created Date & Time', 'Created Date', 'Date'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date'] = temp_df['Date_Parsed'].dt.date
             
-            # Column Mapping
+            # Column Mapping (Strict Integrity)
             col_map = {
                 'Lob': ['Lob', 'LOB', 'Line of Business'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number'],
@@ -96,7 +96,7 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
-            # bbdaily-b2c filter (Thumb Rule)
+            # Thumb Rule: bbdaily-b2c filter
             if 'Lob' in temp_df.columns:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 if not temp_df.empty:
@@ -126,6 +126,7 @@ if uploaded_files:
         show_l5 = st.sidebar.checkbox("Include L5 in Tables", value=False)
         sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
 
+        # Filtering Logic
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(sel_cities)) & (df['Hub'].isin(sel_hubs)) & (df['VIP'].isin(sel_vip))
         if 'L4' in df.columns: mask &= df['L4'].isin(sel_l4)
         if 'L5' in df.columns: mask &= df['L5'].isin(sel_l5)
@@ -140,7 +141,7 @@ if uploaded_files:
             if data.empty: return pd.DataFrame(columns=available + ['Range_Total'])
             report = data.groupby(available).size().reset_index(name='Range_Total')
             
-            # Aging Buckets
+            # Aging Buckets: 0-5, 5-10, 10-15, 15-30
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, s_off, e_off in buckets:
                 b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
@@ -162,7 +163,6 @@ if uploaded_files:
         # --- 5. TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["📊 Analytical Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"])
 
-        # Dynamic columns list
         extra_cols = []
         if show_l4: extra_cols.append('L4')
         if show_l5: extra_cols.append('L5')
@@ -170,7 +170,7 @@ if uploaded_files:
         with t1:
             st.markdown(f'<div class="availability-banner">📊 Analytical Summary Dashboard</div>', unsafe_allow_html=True)
             
-            # --- NEW METRICS SECTION ---
+            # Metrics Section
             m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
             m_col1.metric("Total Tickets", len(f_df))
             m_col2.metric("Total CEEs", f_df['CEE_ID'].nunique() if 'CEE_ID' in f_df.columns else 0)
@@ -179,6 +179,7 @@ if uploaded_files:
             m_col5.metric("L5 Categories", f_df['L5'].nunique() if 'L5' in f_df.columns else 0)
             st.markdown("---")
 
+            # Row 1 Graphs
             c_l, c_r = st.columns(2)
             with c_l:
                 st.write("**Top L4 Categories**")
@@ -186,8 +187,15 @@ if uploaded_files:
             with c_r:
                 st.write("**VIP Mix**")
                 st.bar_chart(f_df['VIP'].value_counts())
-            st.write("**Daily Volume Trend**")
-            st.line_chart(f_df.groupby('Date').size())
+            
+            # Row 2 Graphs - ADDED CITY GRAPH
+            c_city_l, c_trend_r = st.columns(2)
+            with c_city_l:
+                st.write("**City-wise Complaints**")
+                st.bar_chart(f_df['City'].value_counts())
+            with c_trend_r:
+                st.write("**Daily Volume Trend**")
+                st.line_chart(f_df.groupby('Date').size())
 
         with t2:
             cee_sum_cols = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols
@@ -205,4 +213,4 @@ if uploaded_files:
             cust_over_cols = ['Member_Id', 'Ticket_ID', 'Date', 'Hub', 'City', 'VIP'] + extra_cols
             st.dataframe(generate_report(f_df, cust_over_cols, start_date, end_date, True), use_container_width=True)
 else:
-    st.info("Upload CSV files. The dashboard metrics will update based on your selected date range.")
+    st.info("System Ready. Please upload CSV files.")
