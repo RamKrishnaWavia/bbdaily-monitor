@@ -8,7 +8,7 @@ st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower")
 pd.set_option('future.no_silent_downcasting', True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
-st.info("Logic: Strict Column Mapping | Ticket ID Search | bbdaily-b2c Rule")
+st.info("Logic: Multi-ID Search | Priority Date Mapping | bbdaily-b2c Rule")
 
 # --- 2. MULTI-FILE UPLOADER ---
 uploaded_files = st.file_uploader("Upload CSV files", type="csv", accept_multiple_files=True)
@@ -19,32 +19,28 @@ if uploaded_files:
     
     for file in uploaded_files:
         try:
-            # Handle different encodings
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
-            # --- CLEANING HEADERS ---
-            # Remove any leading/trailing spaces from CSV column names
+            # --- CLEANING HEADERS & DATE LOCK ---
             temp_df.columns = temp_df.columns.str.strip()
             
-            # --- ULTIMATE DATE PRIORITY ---
-            # We look for the Complaint date specifically to avoid Order/Slot dates
+            # Strict priority for Complaint timestamps
+            date_priority = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date']
             date_col = None
-            priority_list = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date']
-            
-            for candidate in priority_list:
+            for candidate in date_priority:
                 if candidate in temp_df.columns:
                     date_col = candidate
-                    detected_date_col = candidate # For UI display
+                    detected_date_col = candidate
                     break
             
             if date_col:
                 temp_df['Date_Raw'] = temp_df[date_col]
             
-            # --- REMAINING COLUMN MAPPING ---
+            # --- COLUMN MAPPING ---
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Complaint Number', 'Ticket Number', 'id'],
@@ -69,7 +65,6 @@ if uploaded_files:
                 temp_df = temp_df[temp_df['Lob'].astype(str).str.contains('bbdaily-b2c', case=False, na=False)].copy()
                 
                 if not temp_df.empty and 'Date_Raw' in temp_df.columns:
-                    # Robust date conversion
                     temp_df['Date'] = pd.to_datetime(temp_df['Date_Raw'], errors='coerce').dt.date
                     
                     def clean_val(val):
@@ -93,10 +88,12 @@ if uploaded_files:
         # --- 3. SIDEBAR FILTERS ---
         st.sidebar.header("🎛️ Control Panel")
         
-        # Diagnostic Info
-        st.sidebar.success(f"📅 Mapping Date to: **{detected_date_col}**")
+        # Diagnostic Info (Verify correct date column is picked)
+        st.sidebar.success(f"📅 Active Date: **{detected_date_col}**")
         
-        search_ticket = st.sidebar.text_input("🔍 Search Ticket ID", "").strip()
+        # SEARCH SECTION
+        st.sidebar.subheader("🔍 Integrated Search")
+        search_id = st.sidebar.text_input("Enter Ticket / CEE / Member ID", "").strip()
         
         col_d1, col_d2 = st.sidebar.columns(2)
         with col_d1:
@@ -111,20 +108,20 @@ if uploaded_files:
         group_by_l4 = st.sidebar.checkbox("Group by Level 4", value=True)
         group_by_l5 = st.sidebar.checkbox("Group by Level 5", value=False)
 
-        selected_l4 = st.sidebar.multiselect("L4 Filter", sorted(df['L4'].unique()))
-        selected_l5 = st.sidebar.multiselect("L5 Filter", sorted(df['L5'].unique()))
-
-        # Filter Logic
+        # APPLY FILTERS
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(selected_cities)) & (df['Hub'].isin(selected_hubs))
         filtered_df = df[mask]
         
-        if search_ticket:
-            filtered_df = filtered_df[filtered_df['Ticket_ID'].astype(str).str.contains(search_ticket, case=False)]
-        if selected_l4: filtered_df = filtered_df[filtered_df['L4'].isin(selected_l4)]
-        if selected_l5: filtered_df = filtered_df[filtered_df['L5'].isin(selected_l5)]
+        # Logic for integrated search across 3 IDs
+        if search_id:
+            filtered_df = filtered_df[
+                (filtered_df['Ticket_ID'].astype(str).str.contains(search_id, case=False)) |
+                (filtered_df['CEE_ID'].astype(str).str.contains(search_id, case=False)) |
+                (filtered_df['Member_Id'].astype(str).str.contains(search_id, case=False))
+            ]
 
         # --- 4. AGGREGATION ENGINE ---
-        def generate_master_report(data, groups, s_date, e_date, include_daily=False):
+        def generate_report(data, groups, s_date, e_date, include_daily=False):
             report = data.groupby(groups).size().reset_index(name='Range_Total')
             buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
             for label, s_off, e_off in buckets:
@@ -166,20 +163,20 @@ if uploaded_files:
 
         with t_cee_sum:
             st.subheader("CEE Complaints Summary")
-            st.dataframe(generate_master_report(filtered_df, cee_groups, start_date, end_date, False).sort_values('Range_Total', ascending=False), use_container_width=True)
+            st.dataframe(generate_report(filtered_df, cee_groups, start_date, end_date, False).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t_cee_over:
             st.subheader("CEE Detailed (Verification Mode)")
-            st.dataframe(generate_master_report(filtered_df, cee_groups + ['Ticket_ID', 'Date'], start_date, end_date, True).sort_values('Date', ascending=False), use_container_width=True)
+            st.dataframe(generate_report(filtered_df, cee_groups + ['Ticket_ID', 'Date'], start_date, end_date, True).sort_values('Date', ascending=False), use_container_width=True)
 
         with t_cust_sum:
             st.subheader("Customer Refund Summary")
-            st.dataframe(generate_master_report(filtered_df, cust_groups, start_date, end_date, False).sort_values('Range_Total', ascending=False), use_container_width=True)
+            st.dataframe(generate_report(filtered_df, cust_groups, start_date, end_date, False).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t_cust_over:
             st.subheader("Customer Detailed (Verification Mode)")
-            st.dataframe(generate_master_report(filtered_df, cust_groups + ['Ticket_ID', 'Date'], start_date, end_date, True).sort_values('Date', ascending=False), use_container_width=True)
+            st.dataframe(generate_report(filtered_df, cust_groups + ['Ticket_ID', 'Date'], start_date, end_date, True).sort_values('Date', ascending=False), use_container_width=True)
     else:
-        st.error("No records match the selected filters or Date Range.")
+        st.error("No records match the selected IDs, Filters, or Date Range.")
 else:
-    st.info("Upload CSV files. Note: System prioritizes 'Complaint Created Date & Time'.")
+    st.info("Upload CSV files. Use the sidebar Integrated Search for Ticket ID, CEE ID, or Member ID.")
