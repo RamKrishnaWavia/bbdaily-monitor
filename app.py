@@ -7,25 +7,31 @@ import io
 # --- 1. PAGE CONFIGURATION & AGGRESSIVE UI STYLING ---
 st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower", page_icon="🛡️")
 
-# Force Global Alignment via Aggressive CSS Injection
+# Aggressive CSS Injection for Alignment and UI Layout
 st.markdown("""
     <style>
-    /* Main Background */
     .main { background-color: #f8f9fa; }
     
-    /* Aggressive Center Alignment for all DataFrames */
-    div[data-testid="stDataFrame"] div[role="gridcell"] > div {
+    /* Force center alignment for every cell in the dataframe */
+    [data-testid="stDataFrame"] div[role="gridcell"] > div {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
         text-align: center !important;
     }
     
-    /* Center align headers */
+    /* Force center alignment for headers */
     [data-testid="stDataFrame"] th {
         text-align: center !important;
         vertical-align: middle !important;
         background-color: #f1f3f6 !important;
+    }
+
+    /* Fix the scroll and last column visibility */
+    .stDataFrame {
+        padding-right: 50px !important;
+        border: 1px solid #e6e9ef;
+        border-radius: 10px;
     }
 
     /* Metric Card Styling */
@@ -40,26 +46,19 @@ st.markdown("""
         font-size: 16px;
     }
 
-    /* Fix for last column visibility and horizontal padding */
-    .stDataFrame {
-        padding-right: 40px !important;
-    }
-
-    /* Availability Banner Styling */
+    /* Availability Banner */
     .availability-banner {
-        background-color: #e1f5fe;
-        color: #01579b;
-        padding: 18px;
+        background-color: #e3f2fd;
+        color: #0d47a1;
+        padding: 20px;
         border-radius: 12px;
-        border-left: 6px solid #0288d1;
+        border-left: 8px solid #1976d2;
         font-weight: bold;
         margin-bottom: 25px;
         text-align: center;
         font-size: 18px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
     
-    /* Styling the sidebar */
     section[data-testid="stSidebar"] {
         background-color: #f1f3f6;
         width: 350px !important;
@@ -78,33 +77,31 @@ if uploaded_files:
     
     for file in uploaded_files:
         try:
-            # Handle encodings - UTF-8 or ISO-8859-1
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
                 file.seek(0)
                 temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
             
-            # Record source file and clean column whitespace
             temp_df['Source_CSV'] = file.name
             temp_df.columns = temp_df.columns.str.strip()
             
-            # --- ROBUST DATE PARSING (FORCED DD-MM-YYYY) ---
-            date_priority = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date', 'Complaint Date']
+            # --- DATE LOCK (DD-MM-YYYY) ---
+            date_priority = ['Complaint Created Date & Time', 'Created Date', 'Date', 'date']
             date_col = next((c for c in date_priority if c in temp_df.columns), None)
             
             if date_col:
-                # FORCE dayfirst=True to ensure 01-02 is Feb 1st
+                # dayfirst=True ensures correct parsing of 01-02-2026 as Feb 1st
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date'] = temp_df['Date_Parsed'].dt.date
             
-            # --- COMPREHENSIVE COLUMN MAPPING ---
+            # --- COLUMN MAPPING ---
             col_map = {
                 'Lob': ['Lob', 'LOB', 'lob', 'Line of Business'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number', 'id'],
-                'L4': ['Level 4', 'Agent Disposition Levels 4', 'Category'],
-                'L5': ['Level 5', 'Agent Disposition Levels 5', 'Sub Category'],
+                'L4': ['Level 4', 'Category', 'L4 Category'],
+                'L5': ['Level 5', 'Sub Category', 'L5 Category'],
                 'CEE_Name_1': ['Cee Name', 'CEE NAME', 'Delivery Executive'],
                 'CEE_ID_1': ['CEE Number', 'CEE ID', 'DE ID'],
                 'Member_Id': ['Member Id', 'Member ID', 'Customer ID'],
@@ -127,33 +124,29 @@ if uploaded_files:
                     for col in ['CEE_Name', 'CEE_ID', 'Ticket_ID', 'Member_Id']:
                         orig_col = col + '_1' if col + '_1' in temp_df.columns else col
                         temp_df[col] = temp_df[orig_col].astype(str).replace(['nan', '0', '0.0', 'None'], 'Unknown').str.strip()
-                    
                     all_data.append(temp_df)
         except Exception as e:
-            st.error(f"Critical Error in File {file.name}: {e}")
+            st.error(f"Processing error in {file.name}: {e}")
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
         
         # --- 3. SIDEBAR CONTROLS ---
         st.sidebar.header("🎛️ Control Panel")
-        st.sidebar.markdown("---")
-        
-        search_id = st.sidebar.text_input("🔍 Integrated Search (Ticket/CEE/Member)", "").strip()
+        search_id = st.sidebar.text_input("🔍 Search ID (Ticket/CEE/Member)", "").strip()
         
         col_d1, col_d2 = st.sidebar.columns(2)
-        with col_d1:
-            start_date = st.sidebar.date_input("From Date", df['Date'].min())
-        with col_d2:
-            end_date = st.sidebar.date_input("To Date", df['Date'].max())
+        start_date = col_d1.date_input("From", df['Date'].min())
+        end_date = col_d2.date_input("To", df['Date'].max())
         
-        selected_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
-        selected_hubs = st.sidebar.multiselect("Select Hub", sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()))
+        selected_cities = st.sidebar.multiselect("City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
+        selected_hubs = st.sidebar.multiselect("Hub", sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(selected_cities)]['Hub'].unique()))
         
-        st.sidebar.subheader("Grouping Control")
-        group_by_l4 = st.sidebar.checkbox("Show L4 Category", value=True)
-        group_by_l5 = st.sidebar.checkbox("Show L5 Category", value=False)
+        st.sidebar.subheader("Grouping")
+        g_l4 = st.sidebar.checkbox("Show L4 Category", value=True)
+        g_l5 = st.sidebar.checkbox("Show L5 Category", value=False)
 
+        # Apply Filtering
         mask = (df['Date'] >= start_date) & (df['Date'] <= end_date) & (df['City'].isin(selected_cities)) & (df['Hub'].isin(selected_hubs))
         f_df = df[mask]
         
@@ -163,18 +156,23 @@ if uploaded_files:
                         (f_df['Member_Id'].str.contains(search_id, case=False))]
 
         # --- 4. ENGINE FUNCTIONS ---
-        def style_and_show(data):
+        # Fixed the Duplicate ID error by passing a unique 'id_key'
+        def style_and_show(data, id_key):
             if data.empty:
-                st.warning("No data found for the selected range.")
+                st.warning("No records found for the chosen filters.")
                 return
             
-            # Using simple dataframe first to ensure no module errors
-            # We apply the centering via the CSS injected in Step 1
+            # CSS centering applied automatically via header style injection
             st.dataframe(data, use_container_width=True)
             
-            # CSV Download as fallback to prevent xlsxwriter errors
             csv = data.to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 Download This Table (CSV)", data=csv, file_name=f"report_{datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv')
+            st.download_button(
+                label="📥 Download This Table (CSV)", 
+                data=csv, 
+                file_name=f"BBD_Report_{id_key}_{datetime.now().strftime('%Y%m%d')}.csv", 
+                mime='text/csv',
+                key=f"btn_{id_key}" # THIS FIXES THE DUPLICATE ELEMENT ERROR
+            )
 
         def generate_report(data, groups, s_date, e_date, include_daily=False):
             if data.empty: 
@@ -205,42 +203,42 @@ if uploaded_files:
         ])
 
         c_groups = ['CEE_ID', 'CEE_Name', 'Hub', 'City']
-        if group_by_l4: c_groups.append('L4')
-        if group_by_l5: c_groups.append('L5')
+        if g_l4: c_groups.append('L4')
+        if g_l5: c_groups.append('L5')
         
         m_groups = ['Member_Id', 'City', 'Hub', 'VIP']
-        if group_by_l4: m_groups.append('L4')
-        if group_by_l5: m_groups.append('L5')
+        if g_l4: m_groups.append('L4')
+        if g_l5: m_groups.append('L5')
 
         with t_dash:
             if not f_df.empty:
                 min_d, max_d = f_df['Date'].min().strftime('%d-%b-%Y'), f_df['Date'].max().strftime('%d-%b-%Y')
-                st.markdown(f'<div class="availability-banner">📅 Data Range Detected: {min_d} to {max_d}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="availability-banner">📅 Data Coverage: {min_d} to {max_d}</div>', unsafe_allow_html=True)
                 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Tickets", len(f_df))
-                c2.metric("Unique CEEs", f_df['CEE_ID'].nunique())
-                c3.metric("Unique Customers", f_df['Member_Id'].nunique())
+                c2.metric("Active CEEs", f_df['CEE_ID'].nunique())
+                c3.metric("Impacted Customers", f_df['Member_Id'].nunique())
                 
                 st.markdown("---")
-                st.write("**File Source Verification Table**")
-                style_and_show(f_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows').sort_values('Date'))
+                st.write("**File Source Verification Audit**")
+                style_and_show(f_df.groupby(['Source_CSV', 'Date']).size().reset_index(name='Rows').sort_values('Date'), "source_audit")
 
         with t_cee_s:
             res = generate_report(f_df, c_groups, start_date, end_date)
-            style_and_show(res.sort_values('Range_Total', ascending=False) if not res.empty else res)
+            style_and_show(res.sort_values('Range_Total', ascending=False) if not res.empty else res, "cee_summary")
             
         with t_cee_d:
             res = generate_report(f_df, c_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
-            style_and_show(res.sort_values('Date', ascending=False) if not res.empty else res)
+            style_and_show(res.sort_values('Date', ascending=False) if not res.empty else res, "cee_detailed")
 
         with t_cust_s:
             res = generate_report(f_df, m_groups, start_date, end_date)
-            style_and_show(res.sort_values('Range_Total', ascending=False) if not res.empty else res)
+            style_and_show(res.sort_values('Range_Total', ascending=False) if not res.empty else res, "cust_summary")
 
         with t_cust_d:
             res = generate_report(f_df, m_groups + ['Ticket_ID', 'Date', 'Source_CSV'], start_date, end_date, True)
-            style_and_show(res.sort_values('Date', ascending=False) if not res.empty else res)
+            style_and_show(res.sort_values('Date', ascending=False) if not res.empty else res, "cust_detailed")
 
 else:
     st.info("System Ready. Upload CSV files. Date format DD-MM-YYYY is strictly enforced.")
