@@ -72,7 +72,6 @@ if uploaded_files:
     
     for file in uploaded_files:
         try:
-            # Multi-encoding support for stability
             try:
                 temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
             except:
@@ -81,7 +80,7 @@ if uploaded_files:
             
             temp_df.columns = temp_df.columns.str.strip()
             
-            # Date Parsing Logic (DD-MM-YYYY)
+            # Date Parsing Logic
             date_col = next((c for c in ['Complaint Created Date & Time', 'Created Date', 'Date'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
@@ -116,15 +115,12 @@ if uploaded_files:
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
-        
-        # Clean VIP data
         if 'VIP' in df.columns:
             df['VIP'] = df['VIP'].astype(str).str.strip().replace(['nan', '0', '0.0', 'None'], 'No')
         
         # --- 4. SIDEBAR CONTROL PANEL ---
         st.sidebar.header("🎛️ Control Panel")
         
-        # LOB Filter
         available_lobs = sorted(df['Lob'].astype(str).unique())
         default_lob = [l for l in available_lobs if 'bbdaily-b2c' in l.lower()]
         sel_lob = st.sidebar.multiselect("Select LOB", available_lobs, default=default_lob)
@@ -133,13 +129,11 @@ if uploaded_files:
         start_date = st.sidebar.date_input("From Date", df['Date'].min())
         end_date = st.sidebar.date_input("To Date", df['Date'].max())
         
-        st.sidebar.subheader("📍 Geography & VIP")
         sel_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
         hub_list = sorted(df[df['City'].isin(sel_cities)]['Hub'].unique())
         sel_hubs = st.sidebar.multiselect("Select Hub", hub_list, default=hub_list)
         sel_vip = st.sidebar.multiselect("VIP Status", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
         
-        st.sidebar.subheader("📌 Disposition Filters")
         show_l4 = st.sidebar.checkbox("Include L4", value=True)
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].dropna().unique()), default=sorted(df['L4'].dropna().unique()))
         show_l5 = st.sidebar.checkbox("Include L5", value=True)
@@ -147,11 +141,8 @@ if uploaded_files:
 
         # --- 5. FILTERING MASK ---
         mask = (df['Lob'].astype(str).isin(sel_lob)) & \
-               (df['Date'] >= start_date) & \
-               (df['Date'] <= end_date) & \
-               (df['City'].isin(sel_cities)) & \
-               (df['Hub'].isin(sel_hubs)) & \
-               (df['VIP'].isin(sel_vip))
+               (df['Date'] >= start_date) & (df['Date'] <= end_date) & \
+               (df['City'].isin(sel_cities)) & (df['Hub'].isin(sel_hubs)) & (df['VIP'].isin(sel_vip))
         
         if 'L4' in df.columns: mask &= df['L4'].isin(sel_l4)
         if 'L5' in df.columns: mask &= df['L5'].isin(sel_l5)
@@ -163,7 +154,6 @@ if uploaded_files:
                         (f_df['Member_Id'].astype(str).str.contains(search_id))]
 
         # --- 6. REPORT ENGINES ---
-        # Summary Engine (Aging Buckets)
         def generate_report(data, groups, s_date, e_date):
             avail = [g for g in groups if g in data.columns]
             if data.empty: return pd.DataFrame(columns=avail + ['Range_Total'])
@@ -177,13 +167,18 @@ if uploaded_files:
             for c in report.columns.difference(avail): report[c] = report[c].astype(int)
             return report
 
-        # Overview Engine (L4 Pivot) - NEW REQUIREMENT
-        def generate_l4_pivot(data, index_cols):
+        def generate_pivot(data, index_cols, use_l5=False):
             avail_idx = [c for c in index_cols if c in data.columns]
             if data.empty: return pd.DataFrame(columns=avail_idx)
-            # Group by index + L4 and pivot
-            pivot = data.groupby(avail_idx + ['L4']).size().unstack(fill_value=0).reset_index()
-            # Add Total column
+            
+            plot_df = data.copy()
+            if use_l5:
+                plot_df['Category_Remark'] = plot_df['L4'].astype(str) + " | " + plot_df['L5'].astype(str)
+                pivot_col = 'Category_Remark'
+            else:
+                pivot_col = 'L4'
+                
+            pivot = plot_df.groupby(avail_idx + [pivot_col]).size().unstack(fill_value=0).reset_index()
             pivot['Total_Tickets'] = pivot.iloc[:, len(avail_idx):].sum(axis=1)
             return pivot
 
@@ -218,16 +213,13 @@ if uploaded_files:
             st.dataframe(generate_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t3:
-            # CEE Overview with L4 Columns instead of Ranges
-            cee_ov_idx = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP']
-            st.dataframe(generate_l4_pivot(f_df, cee_ov_idx), use_container_width=True)
+            st.dataframe(generate_pivot(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'], use_l5=False), use_container_width=True)
 
         with t4:
             st.dataframe(generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t5:
-            # Customer Overview with L4 Columns instead of Ranges
-            cust_ov_idx = ['Member_Id', 'City', 'Hub', 'VIP']
-            st.dataframe(generate_l4_pivot(f_df, cust_ov_idx), use_container_width=True)
+            # Customer Overview now includes L5 in columns
+            st.dataframe(generate_pivot(f_df, ['Member_Id', 'City', 'Hub', 'VIP'], use_l5=True), use_container_width=True)
 else:
     st.info("System Ready. Please upload CSV files.")
