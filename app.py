@@ -11,8 +11,8 @@ st.markdown("""
     <style>
     [data-testid="stDataFrame"] div[role="gridcell"] > div { justify-content: center !important; text-align: center !important; }
     .availability-banner {
-        background-color: #e3f2fd; color: #0d47a1; padding: 15px;
-        border-radius: 10px; border-left: 5px solid #1976d2;
+        background-color: #fff3cd; color: #856404; padding: 15px;
+        border-radius: 10px; border-left: 5px solid #ffeeba;
         font-weight: bold; margin-bottom: 20px; text-align: center;
     }
     </style>
@@ -34,7 +34,7 @@ if uploaded_files:
             
             temp_df.columns = temp_df.columns.str.strip()
             
-            # Date Parsing logic for '1-4-2026'
+            # Date Parsing logic
             date_col = next((c for c in ['Date', 'Complaint Created Date & Time'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
@@ -51,7 +51,7 @@ if uploaded_files:
                 'CEE_Name': ['Cee Name', 'Delivery Executive'],
                 'CEE_ID': ['CEE Number', 'CEE ID'],
                 'Member_Id': ['Member Id', 'Member ID'],
-                'Hub': ['Hub', 'HUB'],
+                'Hub': ['Hub', 'HUB', 'Store'],
                 'City': ['City', 'CITY'],
                 'VIP': ['Is VIP Customer', 'VIP Tag']
             }
@@ -72,80 +72,34 @@ if uploaded_files:
         # --- 4. SIDEBAR ---
         st.sidebar.header("🎛️ Control Panel")
         
-        # LOB Filter
         available_lobs = sorted(df['Lob'].dropna().unique())
         sel_lob = st.sidebar.multiselect("Select LOB", available_lobs, default=available_lobs)
         
-        # Date Filter
-        min_d, max_d = df['Date_Only'].min(), df['Date_Only'].max()
-        start_date = st.sidebar.date_input("From Date", min_d)
-        end_date = st.sidebar.date_input("To Date", max_d)
+        start_date = st.sidebar.date_input("From Date", df['Date_Only'].min())
+        end_date = st.sidebar.date_input("To Date", df['Date_Only'].max())
         
-        # Geo Filter
         sel_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
-        hub_options = sorted(df[df['City'].isin(sel_cities)]['Hub'].unique())
-        sel_hubs = st.sidebar.multiselect("Select Hub", hub_options, default=hub_options)
-
+        
         # Disposition Filters
         st.sidebar.subheader("📌 Disposition Filters")
-        show_l4 = st.sidebar.checkbox("Include L4 in Tables", value=True)
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].dropna().unique()), default=sorted(df['L4'].dropna().unique()))
-        
-        show_l5 = st.sidebar.checkbox("Include L5 in Tables", value=False)
-        sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
-
-        show_st = st.sidebar.checkbox("Include Sub type in Tables", value=True)
         sel_st = st.sidebar.multiselect("Filter Sub type", sorted(df['Sub_type'].dropna().unique()), default=sorted(df['Sub_type'].dropna().unique()))
-
-        search_query = st.sidebar.text_input("🔍 Search ID (Ticket/CEE/Member)")
 
         # --- 5. FILTERING LOGIC ---
         mask = (df['Lob'].isin(sel_lob)) & \
                (df['Date_Only'] >= start_date) & \
                (df['Date_Only'] <= end_date) & \
                (df['City'].isin(sel_cities)) & \
-               (df['Hub'].isin(sel_hubs)) & \
                (df['L4'].isin(sel_l4)) & \
-               (df['L5'].isin(sel_l5)) & \
                (df['Sub_type'].isin(sel_st))
         
         f_df = df[mask].copy()
 
-        if search_query:
-            f_df = f_df[
-                f_df['Ticket_ID'].astype(str).str.contains(search_query) |
-                f_df['CEE_ID'].astype(str).str.contains(search_query) |
-                f_df['Member_Id'].astype(str).str.contains(search_query)
-            ]
-
-        # --- 6. REPORT ENGINES ---
-        def get_aging_report(data, group_cols, e_date):
-            if data.empty: return pd.DataFrame()
-            res = data.groupby(group_cols).size().reset_index(name='Total_Tickets')
-            buckets = [("0-5 Days", 0, 5), ("6-10 Days", 6, 10), ("11-15 Days", 11, 15)]
-            for label, start, end in buckets:
-                d_end = e_date - timedelta(days=start)
-                d_start = e_date - timedelta(days=end)
-                b_data = data[(data['Date_Only'] >= d_start) & (data['Date_Only'] <= d_end)]
-                if not b_data.empty:
-                    counts = b_data.groupby(group_cols).size().reset_index(name=label)
-                    res = res.merge(counts, on=group_cols, how='left')
-            return res.fillna(0)
-
-        def get_l4_pivot(data, group_cols):
-            if data.empty: return pd.DataFrame()
-            pivot = data.groupby(group_cols + ['L4']).size().unstack(fill_value=0).reset_index()
-            pivot['Grand_Total'] = pivot.iloc[:, len(group_cols):].sum(axis=1)
-            return pivot
-
-        # --- 7. TAB RENDERING ---
-        t1, t2, t3, t4, t5 = st.tabs(["📊 Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"])
-
-        # Decide extra columns for Summary Tabs
-        extra = []
-        if show_l4: extra.append('L4')
-        if show_l5: extra.append('L5')
-        if show_st: extra.append('Sub_type')
+        # --- 6. TABS ---
+        t1, t2, t3, t4, t5, t6 = st.tabs([
+            "📊 Summary", "👤 CEE Summary", "🔍 CEE Overview", 
+            "🛒 Customer Summary", "🔎 Customer Overview", "🏪 Store (IBND) Summary"
+        ])
 
         with t1:
             st.markdown('<div class="availability-banner">Executive Analytical Summary</div>', unsafe_allow_html=True)
@@ -153,29 +107,57 @@ if uploaded_files:
             c1.metric("Total Tickets", len(f_df))
             c2.metric("Unique CEEs", f_df['CEE_ID'].nunique())
             c3.metric("Unique Members", f_df['Member_Id'].nunique())
-            c4.metric("Hubs", f_df['Hub'].nunique())
-            st.write("### L4 Category Split")
-            st.bar_chart(f_df['L4'].value_counts())
+            c4.metric("Active Hubs", f_df['Hub'].nunique())
+            st.write("### Top 10 Hubs by Complaint Volume")
+            st.bar_chart(f_df['Hub'].value_counts().head(10))
 
         with t2:
-            st.subheader("CEE Aging Analysis")
-            cee_aging = get_aging_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City'] + extra, end_date)
-            st.dataframe(cee_aging.sort_values('Total_Tickets', ascending=False), use_container_width=True)
+            st.subheader("CEE Wise Performance")
+            cee_sum = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name']).size().reset_index(name='Total_Complaints')
+            st.dataframe(cee_sum.sort_values('Total_Complaints', ascending=False), use_container_width=True)
 
         with t3:
-            st.subheader("CEE Category (L4) Breakdown")
-            cee_pivot = get_l4_pivot(f_df, ['CEE_ID', 'CEE_Name', 'Hub'])
+            st.subheader("CEE Category Split")
+            cee_pivot = f_df.groupby(['CEE_Name', 'L4']).size().unstack(fill_value=0)
             st.dataframe(cee_pivot, use_container_width=True)
 
         with t4:
-            st.subheader("Customer Aging Analysis")
-            cust_aging = get_aging_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra, end_date)
-            st.dataframe(cust_aging.sort_values('Total_Tickets', ascending=False), use_container_width=True)
+            st.subheader("Customer Wise Summary")
+            cust_sum = f_df.groupby(['Member_Id', 'City', 'VIP']).size().reset_index(name='Total_Complaints')
+            st.dataframe(cust_sum.sort_values('Total_Complaints', ascending=False), use_container_width=True)
 
         with t5:
-            st.subheader("Customer Category (L4) Breakdown")
-            cust_pivot = get_l4_pivot(f_df, ['Member_Id', 'City', 'VIP'])
+            st.subheader("Customer Category Split")
+            cust_pivot = f_df.groupby(['Member_Id', 'L4']).size().unstack(fill_value=0)
             st.dataframe(cust_pivot, use_container_width=True)
 
+        with t6:
+            st.markdown('<div class="availability-banner">🏪 Store & CEE IBND Deep Dive</div>', unsafe_allow_html=True)
+            
+            # Logic: Filter for IBND specifically if possible, or show overall distribution
+            st.write("### Store-wise Contribution")
+            # Group by Hub and CEE to show the hierarchy
+            store_cee_sum = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name', 'Sub_type']).size().reset_index(name='Ticket_Count')
+            
+            # Pivot table for better readability
+            store_pivot = store_cee_sum.pivot_table(
+                index=['Hub', 'CEE_ID', 'CEE_Name'], 
+                columns='Sub_type', 
+                values='Ticket_Count', 
+                aggfunc='sum', 
+                fill_value=0
+            ).reset_index()
+            
+            # Add a Total Column
+            numeric_cols = store_pivot.select_dtypes(include=[np.number]).columns
+            store_pivot['Grand Total'] = store_pivot[numeric_cols].sum(axis=1)
+            
+            st.dataframe(store_pivot.sort_values(['Hub', 'Grand Total'], ascending=[True, False]), use_container_width=True)
+            
+            # Store Summary Metric
+            st.write("### Hub Distribution")
+            hub_dist = f_df.groupby('Hub').size().reset_index(name='Total')
+            st.bar_chart(hub_dist.set_index('Hub'))
+
 else:
-    st.info("👋 Please upload the bbdaily complaint dump (CSV or Excel) to begin.")
+    st.info("👋 Please upload the bbdaily complaint dump to begin.")
