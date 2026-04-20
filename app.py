@@ -15,12 +15,13 @@ st.markdown("""
         border-radius: 10px; border-left: 5px solid #2b6cb0;
         font-weight: bold; margin-bottom: 20px; text-align: center;
     }
+    .stMetric { background-color: #ffffff; padding: 10px; border-radius: 5px; border: 1px solid #e2e8f0; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower")
 
-# --- 3. MAPPING DICTIONARY ---
+# --- 3. COMPREHENSIVE MAPPING DICTIONARY ---
 SUBTYPE_MAP = {
     'D_R_Fruits & Vegetables': 'Others',
     'Damaged Product': 'Others',
@@ -76,41 +77,43 @@ if uploaded_files:
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date_Only'] = temp_df['Date_Parsed'].dt.date
             
-            # Column Mapping
+            # Detailed Column Mapping
             col_map = {
-                'Lob': ['Lob', 'LOB'],
-                'Ticket_ID': ['Ticket ID', 'Complaint ID'],
-                'L4': ['Agent Disposition Levels 4', 'Level 4'],
-                'L5': ['Agent Disposition Levels 5', 'Level 5'],
-                'Sub_type': ['Sub type', 'Subtype'],
-                'CEE_Name': ['Cee Name', 'Delivery Executive'],
-                'CEE_ID': ['CEE Number', 'CEE ID'],
-                'Member_Id': ['Member Id', 'Member ID'],
-                'Hub': ['Hub', 'HUB', 'Store'],
+                'Lob': ['Lob', 'LOB', 'Line of Business'],
+                'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number'],
+                'L4': ['Agent Disposition Levels 4', 'Level 4', 'Category'],
+                'L5': ['Agent Disposition Levels 5', 'Level 5', 'Sub Category'],
+                'Sub_type': ['Sub type', 'Subtype', 'sub_type'],
+                'CEE_Name': ['Cee Name', 'CEE NAME', 'Delivery Executive'],
+                'CEE_ID': ['CEE Number', 'CEE ID', 'DE ID'],
+                'Member_Id': ['Member Id', 'Member ID', 'Customer ID'],
+                'Hub': ['Hub', 'HUB', 'Store', 'FC NAME'],
                 'City': ['City', 'CITY'],
-                'VIP': ['Is VIP Customer', 'VIP Tag'],
-                'SKU_Name': ['SKU Name', 'Product Name'],
-                'SKU_Cat': ['SKU Category']
+                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status'],
+                'SKU_Name': ['SKU Name', 'Product Name', 'Item Name'],
+                'SKU_Cat': ['SKU Category', 'Item Category', 'Category']
             }
+            
             for standard, options in col_map.items():
                 for opt in options:
                     if opt in temp_df.columns:
                         temp_df[standard] = temp_df[opt]
                         break
             
+            # Clean IDs before grouping
+            for c in ['CEE_ID', 'Member_Id', 'Ticket_ID']:
+                if c in temp_df.columns:
+                    temp_df[c] = temp_df[c].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', 'Unknown')
+
             # Apply New Category Mapping
             if 'Sub_type' in temp_df.columns:
                 def map_category(val):
                     val = str(val).strip()
-                    if val.startswith('Q_I_'): return 'Qulaity Issues'
+                    if val.upper().startswith('Q_I_'): return 'Quality Issues'
                     return SUBTYPE_MAP.get(val, 'Others')
-                
                 temp_df['Complaints_Category'] = temp_df['Sub_type'].apply(map_category)
-            
-            # Clean IDs
-            for c in ['CEE_ID', 'Member_Id', 'Ticket_ID']:
-                if c in temp_df.columns:
-                    temp_df[c] = temp_df[c].astype(str).str.replace(r'\.0$', '', regex=True)
+            else:
+                temp_df['Complaints_Category'] = 'Others'
             
             all_data.append(temp_df)
         except Exception as e:
@@ -118,14 +121,18 @@ if uploaded_files:
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
-        # Fill Unknowns
-        for col in ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_Name']:
+        
+        # Critical: Fill missing values with "Unknown" so they don't disappear from filters
+        fill_cols = ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_Name', 'SKU_Cat', 'Lob']
+        for col in fill_cols:
             if col in df.columns: df[col] = df[col].fillna("Unknown")
             else: df[col] = "Unknown"
-
-        # --- 5. SIDEBAR CONTROL PANEL ---
-        st.sidebar.header("🎛️ Control Panel")
         
+        if 'VIP' not in df.columns: df['VIP'] = 'No'
+        df['VIP'] = df['VIP'].astype(str).replace(['nan', 'None', '0.0', '0'], 'No')
+
+        # --- 5. SIDEBAR ---
+        st.sidebar.header("🎛️ Control Panel")
         sel_lob = st.sidebar.multiselect("Select LOB", sorted(df['Lob'].unique()), default=sorted(df['Lob'].unique()))
         start_date = st.sidebar.date_input("From Date", df['Date_Only'].min())
         end_date = st.sidebar.date_input("To Date", df['Date_Only'].max())
@@ -133,11 +140,7 @@ if uploaded_files:
 
         st.sidebar.subheader("📌 Disposition Filters")
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].unique()), default=sorted(df['L4'].unique()))
-        
-        # NEW SIDEBAR FILTER: Complaints Category Mapping
         sel_cat = st.sidebar.multiselect("Filter Complaints Category", sorted(df['Complaints_Category'].unique()), default=sorted(df['Complaints_Category'].unique()))
-
-        search_id = st.sidebar.text_input("🔍 Quick Search (Ticket/CEE/Member ID)")
 
         # --- 6. FILTERING ---
         mask = (df['Lob'].isin(sel_lob)) & \
@@ -149,11 +152,6 @@ if uploaded_files:
         
         f_df = df[mask].copy()
 
-        if search_id:
-            f_df = f_df[f_df['Ticket_ID'].str.contains(search_id) | 
-                        f_df['CEE_ID'].str.contains(search_id) | 
-                        f_df['Member_Id'].str.contains(search_id)]
-
         # --- 7. TABS ---
         t = st.tabs([
             "📊 Summary", "👤 CEE Summary", "🔍 CEE Overview", 
@@ -161,50 +159,59 @@ if uploaded_files:
             "🏪 Store Summary", "📦 SKU Analysis"
         ])
 
-        # Helper for pivots to avoid blank data
-        def get_pivot(data, group_cols):
-            if data.empty: return pd.DataFrame()
+        # Unified Pivot Function to prevent blank results
+        def get_safe_pivot(data, group_cols):
+            if data.empty: return pd.DataFrame(columns=group_cols + ['Grand_Total'])
             pivot = data.groupby(group_cols + ['L4'], dropna=False).size().unstack(fill_value=0).reset_index()
             num_cols = pivot.select_dtypes(include=[np.number]).columns
             pivot['Grand_Total'] = pivot[num_cols].sum(axis=1)
             return pivot.sort_values('Grand_Total', ascending=False)
 
         with t[0]: # SUMMARY
-            st.markdown('<div class="availability-banner">Executive Dashboard - New Mapped Categories</div>', unsafe_allow_html=True)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total Tickets", len(f_df))
-            m2.metric("Unique CEEs", f_df['CEE_ID'].nunique())
-            m3.metric("Unique Members", f_df['Member_Id'].nunique())
-            m4.metric("Active Hubs", f_df['Hub'].nunique())
+            st.markdown('<div class="availability-banner">Executive Dashboard - Integrity Master Tower</div>', unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Tickets", len(f_df))
+            c2.metric("Unique CEEs", f_df['CEE_ID'].nunique())
+            c3.metric("Unique Members", f_df['Member_Id'].nunique())
+            c4.metric("Active Hubs", f_df['Hub'].nunique())
             
-            c1, c2 = st.columns(2)
-            with c1:
-                st.write("### Complaints Category Distribution")
+            cola, colb = st.columns(2)
+            with cola:
+                st.write("### Complaints Category Split")
                 st.bar_chart(f_df['Complaints_Category'].value_counts())
-            with c2:
-                st.write("### Category Table")
-                st.dataframe(f_df['Complaints_Category'].value_counts().reset_index(name='Count'), use_container_width=True, hide_index=True)
+            with colb:
+                st.write("### L4 Category Distribution")
+                st.bar_chart(f_df['L4'].value_counts())
+
+        with t[1]: # CEE SUMMARY
+            st.subheader("CEE Wise Contribution")
+            cee_sum = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name']).size().reset_index(name='Total_Tickets')
+            st.dataframe(cee_sum.sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
 
         with t[2]: # CEE OVERVIEW
             st.subheader("CEE Wise L4 Breakdown")
-            res = get_pivot(f_df, ['Hub', 'CEE_ID', 'CEE_Name'])
-            st.dataframe(res, use_container_width=True, hide_index=True)
+            st.dataframe(get_safe_pivot(f_df, ['Hub', 'CEE_ID', 'CEE_Name']), use_container_width=True, hide_index=True)
+
+        with t[3]: # CUSTOMER SUMMARY
+            st.subheader("Customer Wise Contribution")
+            cust_sum = f_df.groupby(['Member_Id', 'City', 'VIP']).size().reset_index(name='Total_Tickets')
+            st.dataframe(cust_sum.sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
 
         with t[4]: # CUSTOMER OVERVIEW
             st.subheader("Customer Wise L4 Breakdown")
-            res = get_pivot(f_df, ['Member_Id', 'City'])
-            st.dataframe(res, use_container_width=True, hide_index=True)
+            st.dataframe(get_safe_pivot(f_df, ['Member_Id', 'City', 'VIP']), use_container_width=True, hide_index=True)
 
         with t[5]: # STORE SUMMARY
-            st.subheader("Store & Category Breakdown")
+            st.subheader("Hub & Category Deep Dive")
             store_p = f_df.groupby(['Hub', 'Complaints_Category']).size().unstack(fill_value=0).reset_index()
             st.dataframe(store_p, use_container_width=True, hide_index=True)
 
         with t[6]: # SKU ANALYSIS
             st.subheader("SKU Wise Contribution")
-            sku_d = f_df.groupby(['SKU_Name']).size().reset_index(name='Count')
+            # We filter out "Unknown" from display here if you prefer, but it's better to see it for data quality
+            sku_d = f_df.groupby(['SKU_Cat', 'SKU_Name']).size().reset_index(name='Count')
             sku_d['% Contribution'] = ((sku_d['Count'] / len(f_df)) * 100).round(2)
             st.dataframe(sku_d.sort_values('Count', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.info("👋 Please upload your data file to begin.")
+    st.info("👋 System Ready. Please upload your complaint dump (Excel or CSV).")
