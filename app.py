@@ -2,75 +2,52 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import io
 
-# --- 1. PAGE CONFIGURATION & LAYOUT ---
-st.set_page_config(
-    layout="wide", 
-    page_title="bbdaily Integrity Master Tower", 
-    page_icon="🛡️"
-)
+# --- 1. PAGE CONFIGURATION ---
+st.set_page_config(layout="wide", page_title="bbdaily Integrity Master Tower", page_icon="🛡️")
 
-# --- 2. UI STYLING ---
+# --- 2. STYLING ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    [data-testid="stDataFrame"] div[role="gridcell"] > div,
-    [data-testid="stDataFrame"] div[role="columnheader"] > div {
-        display: flex !important;
-        justify-content: center !important;
-        align-items: center !important;
-        text-align: center !important;
-    }
+    [data-testid="stDataFrame"] div[role="gridcell"] > div { justify-content: center !important; text-align: center !important; }
     .availability-banner {
-        background-color: #e3f2fd; 
-        color: #0d47a1; 
-        padding: 20px;
-        border-radius: 12px; 
-        border-left: 8px solid #1976d2;
-        font-weight: bold; 
-        margin-bottom: 25px; 
-        text-align: center; 
-        font-size: 18px;
+        background-color: #e3f2fd; color: #0d47a1; padding: 15px;
+        border-radius: 10px; border-left: 5px solid #1976d2;
+        font-weight: bold; margin-bottom: 20px; text-align: center;
     }
-    section[data-testid="stSidebar"] { width: 400px !important; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower")
-st.markdown("---")
 
-# --- 3. EXCEL DATA ENGINE ---
-uploaded_files = st.file_uploader("📂 Upload Complaint Dump (Excel Files)", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
+# --- 3. DATA ENGINE ---
+uploaded_files = st.file_uploader("📂 Upload Complaint Dump", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
 
 if uploaded_files:
     all_data = []
-    
     for file in uploaded_files:
         try:
-            # Handle both CSV and Excel for flexibility
             if file.name.endswith('.csv'):
                 temp_df = pd.read_csv(file, low_memory=False, encoding='ISO-8859-1')
             else:
-                engine = 'openpyxl' if file.name.endswith('xlsx') else None
-                temp_df = pd.read_excel(file, engine=engine)
+                temp_df = pd.read_excel(file)
             
             temp_df.columns = temp_df.columns.str.strip()
             
-            # Date Parsing
+            # Date Parsing logic for '1-4-2026'
             date_col = next((c for c in ['Date', 'Complaint Created Date & Time'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
-                temp_df['Date'] = temp_df['Date_Parsed'].dt.date
+                temp_df['Date_Only'] = temp_df['Date_Parsed'].dt.date
             
-            # Core Column Mapping (Updated with Sub type)
+            # Column Mapping
             col_map = {
-                'Lob': ['Lob', 'LOB', 'Line of Business'],
+                'Lob': ['Lob', 'LOB'],
                 'Ticket_ID': ['Ticket ID', 'Complaint ID'],
                 'L4': ['Agent Disposition Levels 4', 'Level 4'],
                 'L5': ['Agent Disposition Levels 5', 'Level 5'],
-                'Sub_type': ['Sub type', 'Subtype', 'sub_type'], # Added Sub type mapping
+                'Sub_type': ['Sub type', 'Subtype'],
                 'CEE_Name': ['Cee Name', 'Delivery Executive'],
                 'CEE_ID': ['CEE Number', 'CEE ID'],
                 'Member_Id': ['Member Id', 'Member ID'],
@@ -78,94 +55,127 @@ if uploaded_files:
                 'City': ['City', 'CITY'],
                 'VIP': ['Is VIP Customer', 'VIP Tag']
             }
-            
             for standard, options in col_map.items():
                 for opt in options:
                     if opt in temp_df.columns:
                         temp_df[standard] = temp_df[opt]
                         break
-            
-            if 'Lob' in temp_df.columns:
-                all_data.append(temp_df)
-                
+            all_data.append(temp_df)
         except Exception as e:
-            st.error(f"Error processing {file.name}: {e}")
+            st.error(f"Error loading {file.name}: {e}")
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
         if 'VIP' not in df.columns: df['VIP'] = 'No'
-        df['VIP'] = df['VIP'].astype(str).str.strip().replace(['nan', '0', '0.0', 'None'], 'No')
-        
-        # --- 4. SIDEBAR CONTROL PANEL ---
+        df['VIP'] = df['VIP'].astype(str).replace(['nan', 'None', '0.0', '0'], 'No')
+
+        # --- 4. SIDEBAR ---
         st.sidebar.header("🎛️ Control Panel")
         
-        available_lobs = sorted(df['Lob'].astype(str).unique())
-        sel_lob = st.sidebar.multiselect("Select LOB", available_lobs, default=[l for l in available_lobs if 'bbdaily' in l.lower()])
+        # LOB Filter
+        available_lobs = sorted(df['Lob'].dropna().unique())
+        sel_lob = st.sidebar.multiselect("Select LOB", available_lobs, default=available_lobs)
         
-        start_date = st.sidebar.date_input("From Date", df['Date'].min())
-        end_date = st.sidebar.date_input("To Date", df['Date'].max())
+        # Date Filter
+        min_d, max_d = df['Date_Only'].min(), df['Date_Only'].max()
+        start_date = st.sidebar.date_input("From Date", min_d)
+        end_date = st.sidebar.date_input("To Date", max_d)
         
-        st.sidebar.subheader("📍 Geography & VIP")
+        # Geo Filter
         sel_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
-        sel_hubs = st.sidebar.multiselect("Select Hub", sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()), default=sorted(df[df['City'].isin(sel_cities)]['Hub'].unique()))
-        sel_vip = st.sidebar.multiselect("VIP Status", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
-        
+        hub_options = sorted(df[df['City'].isin(sel_cities)]['Hub'].unique())
+        sel_hubs = st.sidebar.multiselect("Select Hub", hub_options, default=hub_options)
+
+        # Disposition Filters
         st.sidebar.subheader("📌 Disposition Filters")
-        # Existing Filters
-        show_l4 = st.sidebar.checkbox("Include L4", value=True)
+        show_l4 = st.sidebar.checkbox("Include L4 in Tables", value=True)
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].dropna().unique()), default=sorted(df['L4'].dropna().unique()))
         
-        show_l5 = st.sidebar.checkbox("Include L5", value=True)
+        show_l5 = st.sidebar.checkbox("Include L5 in Tables", value=False)
         sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
 
-        # NEW: Sub type Filter
-        show_subtype = st.sidebar.checkbox("Include Sub type", value=False)
-        sel_subtype = st.sidebar.multiselect("Filter Sub type", sorted(df['Sub_type'].dropna().unique()), default=sorted(df['Sub_type'].dropna().unique()))
+        show_st = st.sidebar.checkbox("Include Sub type in Tables", value=True)
+        sel_st = st.sidebar.multiselect("Filter Sub type", sorted(df['Sub_type'].dropna().unique()), default=sorted(df['Sub_type'].dropna().unique()))
 
-        # --- 5. FILTERING MASK ---
-        mask = (df['Lob'].astype(str).isin(sel_lob)) & \
-               (df['Date'] >= start_date) & \
-               (df['Date'] <= end_date) & \
+        search_query = st.sidebar.text_input("🔍 Search ID (Ticket/CEE/Member)")
+
+        # --- 5. FILTERING LOGIC ---
+        mask = (df['Lob'].isin(sel_lob)) & \
+               (df['Date_Only'] >= start_date) & \
+               (df['Date_Only'] <= end_date) & \
                (df['City'].isin(sel_cities)) & \
                (df['Hub'].isin(sel_hubs)) & \
-               (df['VIP'].isin(sel_vip))
+               (df['L4'].isin(sel_l4)) & \
+               (df['L5'].isin(sel_l5)) & \
+               (df['Sub_type'].isin(sel_st))
         
-        if 'L4' in df.columns: mask &= df['L4'].isin(sel_l4)
-        if 'L5' in df.columns: mask &= df['L5'].isin(sel_l5)
-        if 'Sub_type' in df.columns: mask &= df['Sub_type'].isin(sel_subtype)
-        
-        f_df = df[mask]
+        f_df = df[mask].copy()
 
-        # --- 6. REPORT ENGINE ---
-        def generate_report(data, groups, s_date, e_date):
-            avail = [g for g in groups if g in data.columns]
-            if data.empty: return pd.DataFrame(columns=avail + ['Range_Total'])
-            report = data.groupby(avail).size().reset_index(name='Range_Total')
-            buckets = [("0-5 Days", 0, 5), ("5-10 Days", 6, 10), ("10-15 Days", 11, 15), ("15-30 Days", 16, 30)]
-            for label, s_off, e_off in buckets:
-                b_end, b_start = e_date - timedelta(days=s_off), e_date - timedelta(days=e_off)
-                b_mask = (data['Date'] >= b_start) & (data['Date'] <= b_end)
-                b_counts = data[b_mask].groupby(avail).size().reset_index(name=label)
-                report = report.merge(b_counts, on=avail, how='left').fillna(0)
-            return report
+        if search_query:
+            f_df = f_df[
+                f_df['Ticket_ID'].astype(str).str.contains(search_query) |
+                f_df['CEE_ID'].astype(str).str.contains(search_query) |
+                f_df['Member_Id'].astype(str).str.contains(search_query)
+            ]
 
-        # --- 7. TABS ---
+        # --- 6. REPORT ENGINES ---
+        def get_aging_report(data, group_cols, e_date):
+            if data.empty: return pd.DataFrame()
+            res = data.groupby(group_cols).size().reset_index(name='Total_Tickets')
+            buckets = [("0-5 Days", 0, 5), ("6-10 Days", 6, 10), ("11-15 Days", 11, 15)]
+            for label, start, end in buckets:
+                d_end = e_date - timedelta(days=start)
+                d_start = e_date - timedelta(days=end)
+                b_data = data[(data['Date_Only'] >= d_start) & (data['Date_Only'] <= d_end)]
+                if not b_data.empty:
+                    counts = b_data.groupby(group_cols).size().reset_index(name=label)
+                    res = res.merge(counts, on=group_cols, how='left')
+            return res.fillna(0)
+
+        def get_l4_pivot(data, group_cols):
+            if data.empty: return pd.DataFrame()
+            pivot = data.groupby(group_cols + ['L4']).size().unstack(fill_value=0).reset_index()
+            pivot['Grand_Total'] = pivot.iloc[:, len(group_cols):].sum(axis=1)
+            return pivot
+
+        # --- 7. TAB RENDERING ---
         t1, t2, t3, t4, t5 = st.tabs(["📊 Summary", "👤 CEE Summary", "🔍 CEE Overview", "🛒 Customer Summary", "🔎 Customer Overview"])
 
-        # Determine extra columns based on checkboxes
-        extra_cols = []
-        if show_l4: extra_cols.append('L4')
-        if show_l5: extra_cols.append('L5')
-        if show_subtype: extra_cols.append('Sub_type')
+        # Decide extra columns for Summary Tabs
+        extra = []
+        if show_l4: extra.append('L4')
+        if show_l5: extra.append('L5')
+        if show_st: extra.append('Sub_type')
+
+        with t1:
+            st.markdown('<div class="availability-banner">Executive Analytical Summary</div>', unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Tickets", len(f_df))
+            c2.metric("Unique CEEs", f_df['CEE_ID'].nunique())
+            c3.metric("Unique Members", f_df['Member_Id'].nunique())
+            c4.metric("Hubs", f_df['Hub'].nunique())
+            st.write("### L4 Category Split")
+            st.bar_chart(f_df['L4'].value_counts())
 
         with t2:
-            cee_rep = generate_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols, start_date, end_date)
-            st.dataframe(cee_rep.sort_values('Range_Total', ascending=False), use_container_width=True)
+            st.subheader("CEE Aging Analysis")
+            cee_aging = get_aging_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City'] + extra, end_date)
+            st.dataframe(cee_aging.sort_values('Total_Tickets', ascending=False), use_container_width=True)
+
+        with t3:
+            st.subheader("CEE Category (L4) Breakdown")
+            cee_pivot = get_l4_pivot(f_df, ['CEE_ID', 'CEE_Name', 'Hub'])
+            st.dataframe(cee_pivot, use_container_width=True)
 
         with t4:
-            cust_rep = generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols, start_date, end_date)
-            st.dataframe(cust_rep.sort_values('Range_Total', ascending=False), use_container_width=True)
+            st.subheader("Customer Aging Analysis")
+            cust_aging = get_aging_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra, end_date)
+            st.dataframe(cust_aging.sort_values('Total_Tickets', ascending=False), use_container_width=True)
 
-        # (Other tabs t1, t3, t5 remain same as previous logic)
+        with t5:
+            st.subheader("Customer Category (L4) Breakdown")
+            cust_pivot = get_l4_pivot(f_df, ['Member_Id', 'City', 'VIP'])
+            st.dataframe(cust_pivot, use_container_width=True)
+
 else:
-    st.info("System Ready. Please upload files.")
+    st.info("👋 Please upload the bbdaily complaint dump (CSV or Excel) to begin.")
