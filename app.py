@@ -11,38 +11,19 @@ st.set_page_config(
     page_icon="🛡️"
 )
 
-# --- 2. AGGRESSIVE UI & CENTER ALIGNMENT STYLING (FROZEN) ---
+# --- 2. AGGRESSIVE UI & CENTER ALIGNMENT STYLING ---
 st.markdown("""
     <style>
-    .main { 
-        background-color: #f8f9fa; 
-    }
+    .main { background-color: #f8f9fa; }
     
-    /* Force Center Alignment for Data Grids */
     [data-testid="stDataFrame"] div[role="gridcell"] > div,
-    [data-testid="stDataFrame"] div[role="columnheader"] > div,
-    [data-testid="stDataFrame"] .st-emotion-cache-1wivap2,
-    [data-testid="stDataFrame"] .data-grid-container {
+    [data-testid="stDataFrame"] div[role="columnheader"] > div {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
         text-align: center !important;
-        width: 100% !important;
     }
 
-    [data-testid="stDataFrame"] th {
-        text-align: center !important;
-        vertical-align: middle !important;
-        background-color: #f1f3f6 !important;
-        font-weight: bold !important;
-        border: 1px solid #dee2e6 !important;
-    }
-
-    .stDataFrame {
-        padding-right: 50px !important;
-        border-radius: 10px;
-    }
-    
     .availability-banner {
         background-color: #e3f2fd; 
         color: #0d47a1; 
@@ -55,51 +36,46 @@ st.markdown("""
         font-size: 18px;
     }
     
-    section[data-testid="stSidebar"] { 
-        width: 400px !important; 
-    }
+    section[data-testid="stSidebar"] { width: 400px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower - RK")
+st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower")
 st.markdown("---")
 
-# --- 3. MULTI-FILE UPLOADER & DATA ENGINE ---
-uploaded_files = st.file_uploader("📂 Upload Complaint Dump (CSV Files)", type="csv", accept_multiple_files=True)
+# --- 3. EXCEL DATA ENGINE ---
+# Changed to accept .xlsx and .xls
+uploaded_files = st.file_uploader("📂 Upload Complaint Dump (Excel Files)", type=["xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
     all_data = []
     
     for file in uploaded_files:
         try:
-            # Multi-encoding support for stability
-            try:
-                temp_df = pd.read_csv(file, encoding='utf-8', low_memory=False)
-            except:
-                file.seek(0)
-                temp_df = pd.read_csv(file, encoding='ISO-8859-1', low_memory=False)
-            
+            # Read Excel
+            engine = 'openpyxl' if file.name.endswith('xlsx') else None
+            temp_df = pd.read_excel(file, engine=engine)
             temp_df.columns = temp_df.columns.str.strip()
             
-            # Date Parsing Logic (DD-MM-YYYY)
-            date_col = next((c for c in ['Complaint Created Date & Time', 'Created Date', 'Date'] if c in temp_df.columns), None)
+            # Date Parsing (Handles '1-4-2026' format seen in your sample)
+            date_col = next((c for c in ['Date', 'Complaint Created Date & Time', 'Created Date'] if c in temp_df.columns), None)
             if date_col:
                 temp_df['Date_Parsed'] = pd.to_datetime(temp_df[date_col], dayfirst=True, errors='coerce')
                 temp_df = temp_df.dropna(subset=['Date_Parsed'])
                 temp_df['Date'] = temp_df['Date_Parsed'].dt.date
             
-            # Core Column Mapping
+            # Core Column Mapping based on your sample headings
             col_map = {
-                'Lob': ['Lob', 'LOB', 'Line of Business', 'lob'],
-                'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number', 'ticket_id'],
-                'L4': ['Agent Disposition Levels 4', 'Level 4', 'Category', 'l4'],
-                'L5': ['Agent Disposition Levels 5', 'Level 5', 'Sub Category', 'l5'],
-                'CEE_Name': ['Cee Name', 'CEE NAME', 'Delivery Executive', 'cee_name'],
-                'CEE_ID': ['CEE Number', 'CEE ID', 'DE ID', 'cee_id'],
-                'Member_Id': ['Member Id', 'Member ID', 'Customer ID', 'member_id'],
-                'Hub': ['Hub', 'HUB', 'FC NAME', 'Store', 'hub'],
-                'City': ['City', 'CITY', 'city'],
-                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip']
+                'Lob': ['Lob', 'LOB', 'Line of Business'],
+                'Ticket_ID': ['Ticket ID', 'Complaint ID', 'Ticket Number'],
+                'L4': ['Agent Disposition Levels 4', 'Level 4', 'Category'],
+                'L5': ['Agent Disposition Levels 5', 'Level 5', 'Sub Category'],
+                'CEE_Name': ['Cee Name', 'CEE NAME', 'Delivery Executive'],
+                'CEE_ID': ['CEE Number', 'CEE ID', 'DE ID'],
+                'Member_Id': ['Member Id', 'Member ID', 'Customer ID'],
+                'Hub': ['Hub', 'HUB', 'FC NAME'],
+                'City': ['City', 'CITY'],
+                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status']
             }
             
             for standard, options in col_map.items():
@@ -108,6 +84,7 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
             
+            # Ensure mandatory columns exist before appending
             if 'Lob' in temp_df.columns:
                 all_data.append(temp_df)
                 
@@ -117,19 +94,19 @@ if uploaded_files:
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
         
-        # Clean VIP data
-        if 'VIP' in df.columns:
-            df['VIP'] = df['VIP'].astype(str).str.strip().replace(['nan', '0', '0.0', 'None'], 'No')
+        # Default VIP to 'No' if column missing or empty
+        if 'VIP' not in df.columns:
+            df['VIP'] = 'No'
+        df['VIP'] = df['VIP'].astype(str).str.strip().replace(['nan', '0', '0.0', 'None'], 'No')
         
         # --- 4. SIDEBAR CONTROL PANEL ---
         st.sidebar.header("🎛️ Control Panel")
         
-        # LOB Filter
         available_lobs = sorted(df['Lob'].astype(str).unique())
         default_lob = [l for l in available_lobs if 'bbdaily-b2c' in l.lower()]
         sel_lob = st.sidebar.multiselect("Select LOB", available_lobs, default=default_lob)
         
-        search_id = st.sidebar.text_input("🔍 Search ID", "").strip()
+        search_id = st.sidebar.text_input("🔍 Search (Ticket/CEE/Member ID)", "").strip()
         start_date = st.sidebar.date_input("From Date", df['Date'].min())
         end_date = st.sidebar.date_input("To Date", df['Date'].max())
         
@@ -145,7 +122,7 @@ if uploaded_files:
         show_l5 = st.sidebar.checkbox("Include L5", value=True)
         sel_l5 = st.sidebar.multiselect("Filter L5", sorted(df['L5'].dropna().unique()), default=sorted(df['L5'].dropna().unique()))
 
-        # --- 5. FILTERING MASK ---
+        # --- 5. FILTERING ---
         mask = (df['Lob'].astype(str).isin(sel_lob)) & \
                (df['Date'] >= start_date) & \
                (df['Date'] <= end_date) & \
@@ -163,7 +140,6 @@ if uploaded_files:
                         (f_df['Member_Id'].astype(str).str.contains(search_id))]
 
         # --- 6. REPORT ENGINES ---
-        # Summary Engine (Aging Buckets)
         def generate_report(data, groups, s_date, e_date):
             avail = [g for g in groups if g in data.columns]
             if data.empty: return pd.DataFrame(columns=avail + ['Range_Total'])
@@ -174,16 +150,12 @@ if uploaded_files:
                 b_mask = (data['Date'] >= b_start) & (data['Date'] <= b_end)
                 b_counts = data[b_mask].groupby(avail).size().reset_index(name=label)
                 report = report.merge(b_counts, on=avail, how='left').fillna(0)
-            for c in report.columns.difference(avail): report[c] = report[c].astype(int)
             return report
 
-        # Overview Engine (L4 Pivot) - NEW REQUIREMENT
         def generate_l4_pivot(data, index_cols):
             avail_idx = [c for c in index_cols if c in data.columns]
             if data.empty: return pd.DataFrame(columns=avail_idx)
-            # Group by index + L4 and pivot
             pivot = data.groupby(avail_idx + ['L4']).size().unstack(fill_value=0).reset_index()
-            # Add Total column
             pivot['Total_Tickets'] = pivot.iloc[:, len(avail_idx):].sum(axis=1)
             return pivot
 
@@ -202,32 +174,23 @@ if uploaded_files:
             m_col3.metric("Unique Customers", f_df['Member_Id'].nunique() if 'Member_Id' in f_df.columns else 0)
             m_col4.metric("L4 Categories", f_df['L4'].nunique() if 'L4' in f_df.columns else 0)
             m_col5.metric("L5 Remarks", f_df['L5'].nunique() if 'L5' in f_df.columns else 0)
-            st.markdown("---")
+            
             c1, c2 = st.columns(2)
             with c1: st.write("**L4 Distribution**"); st.bar_chart(f_df['L4'].value_counts())
             with c2: st.write("**City Distribution**"); st.bar_chart(f_df['City'].value_counts())
-            c3, c4 = st.columns(2)
-            with c3: st.write("**VIP Mix**"); st.bar_chart(f_df['VIP'].value_counts())
-            with c4: st.write("**Daily Trend**"); st.line_chart(f_df.groupby('Date').size())
-            st.markdown("---")
-            b1, b2 = st.columns(2)
-            with b1: st.dataframe(f_df['L4'].value_counts().reset_index().rename(columns={'count':'Total'}), hide_index=True, use_container_width=True)
-            with b2: st.dataframe(f_df['L5'].value_counts().reset_index().rename(columns={'count':'Total'}), hide_index=True, use_container_width=True)
 
         with t2:
-            st.dataframe(generate_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
+            cee_rep = generate_report(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP'] + extra_cols, start_date, end_date)
+            st.dataframe(cee_rep.sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t3:
-            # CEE Overview with L4 Columns instead of Ranges
-            cee_ov_idx = ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP']
-            st.dataframe(generate_l4_pivot(f_df, cee_ov_idx), use_container_width=True)
+            st.dataframe(generate_l4_pivot(f_df, ['CEE_ID', 'CEE_Name', 'Hub', 'City', 'VIP']), use_container_width=True)
 
         with t4:
-            st.dataframe(generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols, start_date, end_date).sort_values('Range_Total', ascending=False), use_container_width=True)
+            cust_rep = generate_report(f_df, ['Member_Id', 'City', 'Hub', 'VIP'] + extra_cols, start_date, end_date)
+            st.dataframe(cust_rep.sort_values('Range_Total', ascending=False), use_container_width=True)
 
         with t5:
-            # Customer Overview with L4 Columns instead of Ranges
-            cust_ov_idx = ['Member_Id', 'City', 'Hub', 'VIP']
-            st.dataframe(generate_l4_pivot(f_df, cust_ov_idx), use_container_width=True)
+            st.dataframe(generate_l4_pivot(f_df, ['Member_Id', 'City', 'Hub', 'VIP']), use_container_width=True)
 else:
-    st.info("System Ready. Please upload CSV files.")
+    st.info("System Ready. Please upload Excel (.xlsx or .xls) files.")
