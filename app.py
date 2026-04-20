@@ -24,7 +24,7 @@ st.markdown("""
 
 st.title("🛡️ BBD 2.0 Integrity & Fraud Master Tower")
 
-# --- 3. MAPPING DICTIONARY ---
+# --- 3. COMPREHENSIVE MAPPING DICTIONARY ---
 SUBTYPE_MAP = {
     'D_R_Fruits & Vegetables': 'Others', 'Damaged Product': 'Others',
     'Delay Delivery': 'Delay Delivery', 'EXPIRED': 'Near to Expiry',
@@ -73,7 +73,7 @@ if uploaded_files:
                 'Sub_type': ['Sub type', 'Subtype'], 'CEE_Name': ['Cee Name', 'CEE NAME'],
                 'CEE_ID': ['CEE Number', 'CEE ID'], 'Member_Id': ['Member Id', 'Member ID'],
                 'Hub': ['Hub', 'HUB', 'Store'], 'City': ['City', 'CITY'],
-                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip'], # Expanded keyword list
+                'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip'],
                 'SKU_Name': ['SKU Name', 'Product Name'], 'SKU_Cat': ['SKU Category']
             }
             for standard, options in col_map.items():
@@ -82,11 +82,9 @@ if uploaded_files:
                         temp_df[standard] = temp_df[opt]
                         break
 
-            # --- FIX: Ensure VIP column exists even if not in file ---
-            if 'VIP' not in temp_df.columns:
-                temp_df['VIP'] = 'No'
+            if 'VIP' not in temp_df.columns: temp_df['VIP'] = 'No'
 
-            # Clean IDs & Nulls
+            # Clean IDs
             for c in ['CEE_ID', 'Member_Id', 'Ticket_ID']:
                 if c in temp_df.columns:
                     temp_df[c] = temp_df[c].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', 'Unknown')
@@ -107,12 +105,8 @@ if uploaded_files:
 
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
-        
-        # Fill missing values for grouping consistency
-        fill_cols = ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_Name', 'SKU_Cat', 'VIP']
-        for col in fill_cols:
-            if col in df.columns: df[col] = df[col].fillna("Unknown")
-            else: df[col] = "Unknown"
+        for col in ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_Name', 'SKU_Cat', 'VIP']:
+            df[col] = df[col].fillna("Unknown") if col in df.columns else "Unknown"
         
         df['VIP'] = df['VIP'].astype(str).replace(['nan', 'None', '0.0', '0'], 'No')
 
@@ -126,7 +120,6 @@ if uploaded_files:
         st.sidebar.subheader("📌 Filters")
         sel_l4 = st.sidebar.multiselect("Filter L4", sorted(df['L4'].unique()), default=sorted(df['L4'].unique()))
         sel_cat = st.sidebar.multiselect("Filter Complaints Category", sorted(df['Complaints_Category'].unique()), default=sorted(df['Complaints_Category'].unique()))
-        # Added VIP filter back to sidebar safely
         sel_vip = st.sidebar.multiselect("Filter VIP", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
 
         # --- 6. FILTERING ---
@@ -146,55 +139,60 @@ if uploaded_files:
             c3.metric("Unique Members", f_df['Member_Id'].nunique())
             c4.metric("Hubs", f_df['Hub'].nunique())
             cola, colb = st.columns(2)
-            cola.write("### Complaints Category")
+            cola.write("### Complaints Category Distribution")
             cola.bar_chart(f_df['Complaints_Category'].value_counts())
             colb.write("### L4 Distribution")
             colb.bar_chart(f_df['L4'].value_counts())
 
-        with t[1]: # CEE SUMMARY
-            cee_sum = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name']).size().reset_index(name='Tickets')
-            st.dataframe(cee_sum.sort_values('Tickets', ascending=False), use_container_width=True, hide_index=True)
-
         with t[2]: # CEE OVERVIEW
-            # Safely handle the pivot to avoid blank screens
             if not f_df.empty:
                 pivot = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name', 'L4'], dropna=False).size().unstack(fill_value=0).reset_index()
-                num_cols = pivot.select_dtypes(include=[np.number]).columns
-                pivot['Grand Total'] = pivot[num_cols].sum(axis=1)
+                pivot['Grand Total'] = pivot.select_dtypes(include=[np.number]).sum(axis=1)
                 st.dataframe(pivot.sort_values('Grand Total', ascending=False), use_container_width=True, hide_index=True)
-
-        with t[3]: # CUSTOMER SUMMARY
-            cust_sum = f_df.groupby(['Member_Id', 'City', 'VIP']).size().reset_index(name='Tickets')
-            st.dataframe(cust_sum.sort_values('Tickets', ascending=False), use_container_width=True, hide_index=True)
-
-        with t[4]: # CUSTOMER OVERVIEW
-            if not f_df.empty:
-                pivot_c = f_df.groupby(['Member_Id', 'City', 'VIP', 'L4'], dropna=False).size().unstack(fill_value=0).reset_index()
-                num_cols_c = pivot_c.select_dtypes(include=[np.number]).columns
-                pivot_c['Grand Total'] = pivot_c[num_cols_c].sum(axis=1)
-                st.dataframe(pivot_c.sort_values('Grand Total', ascending=False), use_container_width=True, hide_index=True)
 
         with t[5]: # STORE SUMMARY
             st.subheader("Hub & Category Deep Dive")
             store_p = f_df.groupby(['Hub', 'Complaints_Category']).size().unstack(fill_value=0).reset_index()
-            num_cols_s = store_p.select_dtypes(include=[np.number]).columns
-            store_p['Grand Total'] = store_p[num_cols_s].sum(axis=1)
+            store_p['Grand Total'] = store_p.select_dtypes(include=[np.number]).sum(axis=1)
             st.dataframe(store_p.sort_values('Grand Total', ascending=False), use_container_width=True, hide_index=True)
 
-        with t[6]: # SKU ANALYSIS
+        with t[6]: # SKU ANALYSIS (Filtered)
             sku_f = f_df[(f_df['SKU_Name'].notna()) & (f_df['SKU_Name'] != "Unknown") & (f_df['SKU_Name'].astype(str).str.lower() != "nan")].copy()
             if not sku_f.empty:
                 sku_d = sku_f.groupby(['SKU_Cat', 'SKU_Name']).size().reset_index(name='Count')
                 sku_d['% Contribution'] = ((sku_d['Count'] / len(f_df)) * 100).round(2)
                 st.dataframe(sku_d.sort_values('Count', ascending=False), use_container_width=True, hide_index=True)
             else:
-                st.warning("No valid SKU data available.")
+                st.warning("No SKU data.")
 
-        with t[7]: # CATEGORY ANALYSIS
-            cat_a = f_df.groupby('Complaints_Category').agg(Total_Tickets=('Ticket_ID', 'count'), Unique_Members=('Member_Id', 'nunique')).reset_index()
-            cat_a['Tickets_per_Member'] = (cat_a['Total_Tickets'] / cat_a['Unique_Members']).round(2)
-            cat_a['%_Contribution'] = ((cat_a['Total_Tickets'] / len(f_df)) * 100).round(2)
-            st.dataframe(cat_a.sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
+        with t[7]: # CATEGORY ANALYSIS (PER DATE CALCULATION)
+            st.markdown('<div class="availability-banner">📂 Category Contribution divided by Daily Unique Customers</div>', unsafe_allow_html=True)
+            
+            # 1. Total unique customers per date
+            daily_unique_cust = f_df.groupby('Date_Only')['Member_Id'].nunique().reset_index(name='Daily_Total_Cust')
+            
+            # 2. Count of complaints per category per date
+            cat_daily = f_df.groupby(['Date_Only', 'Complaints_Category']).size().reset_index(name='Cat_Count')
+            
+            # 3. Merge and calculate the rate
+            cat_merged = pd.merge(cat_daily, daily_unique_cust, on='Date_Only')
+            cat_merged['Rate_per_Daily_Cust'] = (cat_merged['Cat_Count'] / cat_merged['Daily_Total_Cust']).round(4)
+            
+            # 4. Aggregate for the final table view
+            final_cat_a = cat_merged.groupby('Complaints_Category').agg({
+                'Cat_Count': 'sum',
+                'Rate_per_Daily_Cust': 'mean' # Averaged across the selected date range
+            }).reset_index().rename(columns={'Cat_Count': 'Total_Tickets', 'Rate_per_Daily_Cust': 'Avg_Daily_Rate'})
+            
+            # 5. Add Total Contribution %
+            final_cat_a['%_Contribution'] = ((final_cat_a['Total_Tickets'] / len(f_df)) * 100).round(2)
+            
+            st.dataframe(final_cat_a.sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
+            st.info("💡 'Avg_Daily_Rate' = Sum of (Daily Category Count / Daily Unique Customers) divided by Number of Days.")
+
+        # Customer Summary Logic
+        with t[3]:
+            st.dataframe(f_df.groupby(['Member_Id', 'City', 'VIP']).size().reset_index(name='Tickets').sort_values('Tickets', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.info("👋 Upload data files to begin.")
+    st.info("👋 System Ready. Please upload data.")
