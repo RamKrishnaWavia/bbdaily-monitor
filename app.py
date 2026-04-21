@@ -74,7 +74,9 @@ if uploaded_files:
                 'CEE_ID': ['CEE Number', 'CEE ID'], 'Member_Id': ['Member Id', 'Member ID'],
                 'Hub': ['Hub', 'HUB', 'Store'], 'City': ['City', 'CITY'],
                 'VIP': ['Is VIP Customer', 'VIP Tag', 'VIP Status', 'vip'],
-                'SKU_Name': ['SKU Name', 'Product Name'], 'SKU_Cat': ['SKU Category']
+                'SKU_ID': ['SKU Id', 'SKU ID', 'Item ID'], # Added SKU ID Mapping
+                'SKU_Name': ['SKU Name', 'Product Name'], 
+                'SKU_Cat': ['SKU Category', 'Item Category']
             }
             for standard, options in col_map.items():
                 for opt in options:
@@ -84,8 +86,8 @@ if uploaded_files:
 
             if 'VIP' not in temp_df.columns: temp_df['VIP'] = 'No'
 
-            # Clean IDs
-            for c in ['CEE_ID', 'Member_Id', 'Ticket_ID']:
+            # Clean IDs (Force String, Remove .0)
+            for c in ['CEE_ID', 'Member_Id', 'Ticket_ID', 'SKU_ID']:
                 if c in temp_df.columns:
                     temp_df[c] = temp_df[c].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', 'Unknown')
 
@@ -106,7 +108,7 @@ if uploaded_files:
     if all_data:
         df = pd.concat(all_data, ignore_index=True)
         # Fill missing grouping values
-        fill_cols = ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_Name', 'SKU_Cat', 'VIP', 'Lob']
+        fill_cols = ['L4', 'L5', 'Complaints_Category', 'Hub', 'City', 'CEE_Name', 'SKU_ID', 'SKU_Name', 'SKU_Cat', 'VIP', 'Lob']
         for col in fill_cols:
             if col in df.columns: df[col] = df[col].fillna("Unknown")
             else: df[col] = "Unknown"
@@ -114,25 +116,16 @@ if uploaded_files:
         df['VIP'] = df['VIP'].astype(str).replace(['nan', 'None', '0.0', '0'], 'No')
         df['City_Store'] = df['City'] + " - " + df['Hub']
 
-        # --- 5. SIDEBAR CONTROL PANEL ---
+        # --- 5. SIDEBAR ---
         st.sidebar.header("🎛️ Control Panel")
-        
-        # Core Filters
         sel_lob = st.sidebar.multiselect("Select LOB", sorted(df['Lob'].unique()), default=sorted(df['Lob'].unique()))
         start_date = st.sidebar.date_input("From Date", df['Date_Only'].min())
         end_date = st.sidebar.date_input("To Date", df['Date_Only'].max())
         sel_cities = st.sidebar.multiselect("Select City", sorted(df['City'].unique()), default=sorted(df['City'].unique()))
-        
-        # Hub Filter (Filtered by City)
         hub_list = sorted(df[df['City'].isin(sel_cities)]['Hub'].unique())
         sel_hubs = st.sidebar.multiselect("Select Hub/Store", hub_list, default=hub_list)
 
-        st.sidebar.subheader("📌 Performance Filters")
-        # CEE Filter
-        cee_list = sorted(df[df['Hub'].isin(sel_hubs)]['CEE_Name'].unique())
-        sel_cee = st.sidebar.multiselect("Filter by CEE Name", cee_list, default=cee_list)
-        
-        # Category & L4 Filters
+        st.sidebar.subheader("📌 Filters")
         sel_cat = st.sidebar.multiselect("Filter Complaints Category", sorted(df['Complaints_Category'].unique()), default=sorted(df['Complaints_Category'].unique()))
         sel_l4 = st.sidebar.multiselect("Filter L4 Categories", sorted(df['L4'].unique()), default=sorted(df['L4'].unique()))
         sel_vip = st.sidebar.multiselect("Filter VIP Status", sorted(df['VIP'].unique()), default=sorted(df['VIP'].unique()))
@@ -143,7 +136,6 @@ if uploaded_files:
                (df['Date_Only'] <= end_date) & \
                (df['City'].isin(sel_cities)) & \
                (df['Hub'].isin(sel_hubs)) & \
-               (df['CEE_Name'].isin(sel_cee)) & \
                (df['Complaints_Category'].isin(sel_cat)) & \
                (df['L4'].isin(sel_l4)) & \
                (df['VIP'].isin(sel_vip))
@@ -168,12 +160,6 @@ if uploaded_files:
             colb.write("### Top Hubs by Volume")
             colb.bar_chart(f_df['Hub'].value_counts().head(10))
 
-        # TAB 2: CEE SUMMARY
-        with t[1]:
-            st.subheader("CEE Performance Summary")
-            cee_sum = f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name']).size().reset_index(name='Tickets')
-            st.dataframe(cee_sum.sort_values('Tickets', ascending=False), use_container_width=True, hide_index=True)
-
         # TAB 3: CEE OVERVIEW (PIVOT)
         with t[2]:
             st.subheader("CEE Category-wise (L4) Breakdown")
@@ -183,13 +169,7 @@ if uploaded_files:
                 pivot['Grand Total'] = pivot[num_cols].sum(axis=1)
                 st.dataframe(pivot.sort_values('Grand Total', ascending=False), use_container_width=True, hide_index=True)
 
-        # TAB 4: CUSTOMER SUMMARY (City - Store combined)
-        with t[3]:
-            st.subheader("Customer Volume (City - Hub)")
-            cust_sum = f_df.groupby(['Member_Id', 'City_Store', 'VIP']).size().reset_index(name='Total_Tickets')
-            st.dataframe(cust_sum.sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
-
-        # TAB 5: CUSTOMER OVERVIEW (City - Store combined)
+        # TAB 5: CUSTOMER OVERVIEW
         with t[4]:
             st.subheader("Customer L4 Breakdown")
             if not f_df.empty:
@@ -198,14 +178,13 @@ if uploaded_files:
                 pivot_c['Grand Total'] = pivot_c[num_cols_c].sum(axis=1)
                 st.dataframe(pivot_c.sort_values('Grand Total', ascending=False), use_container_width=True, hide_index=True)
 
-        # TAB 6: STORE SUMMARY (Grand Total row included)
+        # TAB 6: STORE SUMMARY (With Grand Total row)
         with t[5]:
             st.subheader("Hub & Category Matrix")
             store_p = f_df.groupby(['Hub', 'Complaints_Category']).size().unstack(fill_value=0).reset_index()
             num_cols_s = store_p.select_dtypes(include=[np.number]).columns
             store_p['Grand Total'] = store_p[num_cols_s].sum(axis=1)
             
-            # Total row
             hub_totals = store_p[num_cols_s].sum().to_frame().T
             hub_totals['Hub'] = 'GRAND TOTAL'
             hub_totals['Grand Total'] = hub_totals[num_cols_s].sum(axis=1)
@@ -213,12 +192,19 @@ if uploaded_files:
             store_display = pd.concat([store_p.sort_values('Grand Total', ascending=False), hub_totals], ignore_index=True)
             st.dataframe(store_display, use_container_width=True, hide_index=True)
 
-        # TAB 7: SKU ANALYSIS (Cleaned)
+        # TAB 7: SKU ANALYSIS (Cleaned + Includes SKU ID)
         with t[6]:
             st.subheader("SKU Contribution (Excluding Blanks)")
-            sku_f = f_df[(f_df['SKU_Name'].notna()) & (f_df['SKU_Name'] != "Unknown") & (f_df['SKU_Name'].astype(str).str.lower() != "nan")].copy()
+            # Filter out Blanks from both Name and ID
+            sku_f = f_df[
+                (f_df['SKU_Name'].notna()) & (f_df['SKU_Name'] != "Unknown") & 
+                (f_df['SKU_ID'].notna()) & (f_df['SKU_ID'] != "Unknown") &
+                (f_df['SKU_Name'].astype(str).str.lower() != "nan")
+            ].copy()
+            
             if not sku_f.empty:
-                sku_d = sku_f.groupby(['SKU_Cat', 'SKU_Name']).size().reset_index(name='Count')
+                # Group by ID, Cat, and Name
+                sku_d = sku_f.groupby(['SKU_ID', 'SKU_Cat', 'SKU_Name']).size().reset_index(name='Count')
                 sku_d['% Contribution'] = ((sku_d['Count'] / len(f_df)) * 100).round(2)
                 st.dataframe(sku_d.sort_values('Count', ascending=False), use_container_width=True, hide_index=True)
             else:
@@ -227,7 +213,6 @@ if uploaded_files:
         # TAB 8: CATEGORY ANALYSIS (Denominator = Unique Customers)
         with t[7]:
             st.markdown('<div class="availability-banner">📂 Category Rate & % Contribution</div>', unsafe_allow_html=True)
-            
             total_unique_cust = f_df['Member_Id'].nunique()
             total_tickets = len(f_df)
             
@@ -239,7 +224,6 @@ if uploaded_files:
             cat_final['Category_Rate'] = (cat_final['Total_Complaints'] / total_unique_cust if total_unique_cust > 0 else 0).round(4)
             cat_final['%_Contribution'] = ((cat_final['Total_Complaints'] / total_tickets) * 100).round(2)
             
-            # Grand Total row
             total_row = pd.DataFrame({
                 'Complaints_Category': ['GRAND TOTAL'],
                 'Total_Complaints': [total_tickets],
@@ -251,6 +235,10 @@ if uploaded_files:
             cat_display = pd.concat([cat_final.sort_values('Total_Complaints', ascending=False), total_row], ignore_index=True)
             st.write(f"**Overall Unique Customers in this Filter:** `{total_unique_cust}`")
             st.dataframe(cat_display, use_container_width=True, hide_index=True)
+
+        # Tab 2 & 4 (Simplified for code health)
+        with t[1]: st.dataframe(f_df.groupby(['Hub', 'CEE_ID', 'CEE_Name']).size().reset_index(name='Tickets').sort_values('Tickets', ascending=False), use_container_width=True, hide_index=True)
+        with t[3]: st.dataframe(f_df.groupby(['Member_Id', 'City_Store', 'VIP']).size().reset_index(name='Total_Tickets').sort_values('Total_Tickets', ascending=False), use_container_width=True, hide_index=True)
 
 else:
     st.info("👋 System Ready. Please upload the complaint dump files.")
